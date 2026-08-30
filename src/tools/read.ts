@@ -94,7 +94,7 @@ export function createListTool(services: DataServices): ToolDefinition {
     presentCall: () => ({ card: 'generic', title: '列出数据集', kind: 'read' }),
     execute: async (_args, exec: ToolExec): Promise<ListOutput> => {
       exec.signal.throwIfAborted()
-      const scope = services.scopeOf(exec)
+      const scope = await services.scopeOf(exec)
       const records = await services.store.list(scope.scopeKey)
       exec.signal.throwIfAborted()
       return {

@@ -267,7 +267,7 @@ export {
   parseXLSX,
   sanitizeColumnName,
 } from './parse'
-export { isInside, normalizeDirectory, resolveInputFile } from './scope'
+export { canonicalDirectory, isInside, normalizeDirectory, resolveInputFile } from './scope'
 export { SqlError, buildStructuredQuery, substituteDatasetAlias, validateReadOnlyQuery } from './sql'
 export { PHYSICAL_TABLE_PATTERN, assertPhysicalTableName, generateTableName } from './store'
 export { PLUGIN_NAME } from './tooling'

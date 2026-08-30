@@ -267,7 +267,8 @@ export interface JobRegistryLike {
 export interface DataServices {
   cfg: DataConfig
   store: DatasetStore
-  scopeOf(exec: ToolExec): ScopeContext
+  /** 解析一次调用的工作区；拿不到会话 cwd 时会 reject（`ScopeError`）。 */
+  scopeOf(exec: ToolExec): Promise<ScopeContext>
   /** 可选：`ctx.jobs` 不可用时后台导入降级为前台执行。 */
   jobs?: JobRegistryLike
 }
@@ -285,7 +286,7 @@ export async function resolveDataset(
   reference: string,
   options: { requireReady?: boolean } = {},
 ): Promise<ResolvedDataset> {
-  const scope = services.scopeOf(exec)
+  const scope = await services.scopeOf(exec)
   const record = await services.store.require(scope.scopeKey, reference, options)
   const db = await services.store.database(scope.scopeKey)
   return { scope, record, db }

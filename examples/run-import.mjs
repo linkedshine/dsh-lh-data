@@ -205,7 +205,8 @@ function makeExec(toolName, args) {
     arguments: args,
     agent: {
       id: 'agent-1',
-      session: { cwd: workspace, id: 'session-1' },
+      // 与真实 dsh 一致：cwd 挂在 SessionHeader 上（session.header.cwd）。
+      session: { header: { cwd: workspace, id: 'session-1' } },
       inject: message => injected.push(message),
     },
     signal: new AbortController().signal,
@@ -343,10 +344,45 @@ check('完成后回注通知', injected.length > injectedBefore, `新增 ${injec
 const bgList = await callOn(bgCtx, 'dataset_list', {})
 check('后台导入后状态 ready 且 3 行', bgList.value.datasets[0]?.status === 'ready' && bgList.value.datasets[0]?.rowCount === 3, JSON.stringify(bgList.value.datasets[0]))
 
+// ── 阶段 4：作用域解析（session.header.cwd / fail-loud） ───────────────────
+
+section('集成：作用域解析')
+const scopeCtx = makeCtx()
+apply(scopeCtx, validateConfig({ dbPath: join(workspace, 'scope.db'), requireApprovalForWrites: false }))
+
+async function importWithAgent(agent, args) {
+  const definition = scopeCtx.toolsByName.get('dataset_import')
+  const exec = { name: 'dataset_import', arguments: args, agent, signal: new AbortController().signal, deferContext() {} }
+  return definition.execute(args, exec)
+}
+
+// 真实 dsh 运行时的形状：cwd 挂在 SessionHeader 上（Agent.session 是 Session）。
+const headerAgent = { id: 'agent-1', session: { header: { cwd: workspace, id: 'session-1' } }, inject() {} }
+check(
+  'session.header.cwd 生效（相对路径按会话 cwd 解析）',
+  (await importWithAgent(headerAgent, { path: 'sales.xlsx', name: 'scope-header' })).status === 'ready',
+)
+
+// 旧约定 / headless 的扁平形状仍兼容。
+const flatAgent = { id: 'agent-1', session: { cwd: workspace, id: 'session-1' }, inject() {} }
+check(
+  '扁平 session.cwd 仍兼容',
+  (await importWithAgent(flatAgent, { path: 'sales.xlsx', name: 'scope-flat' })).status === 'ready',
+)
+
+// fail-loud：拿不到会话 cwd 时必须报错，绝不静默回落到 process.cwd()（dsh 启动目录）。
+const noCwdAgent = { id: 'agent-1', session: { header: { id: 'session-1' } }, inject() {} }
+try {
+  await importWithAgent(noCwdAgent, { path: 'sales.xlsx' })
+  check('缺 cwd 时 fail-loud（不回落 process.cwd）', false, '未抛错')
+} catch (error) {
+  check('缺 cwd 时 fail-loud（不回落 process.cwd）', String(error.message).includes('无法解析工作区目录'), error.message)
+}
+
 // ── 收尾 ──────────────────────────────────────────────────────────────────
 
 section('生命周期')
-for (const dispose of [...ctx.disposers, ...readOnlyCtx.disposers, ...bgCtx.disposers]) dispose()
+for (const dispose of [...ctx.disposers, ...readOnlyCtx.disposers, ...bgCtx.disposers, ...scopeCtx.disposers]) dispose()
 check('卸载后工具全部注销', ctx.toolsByName.size === 0, `剩余 ${ctx.toolsByName.size}`)
 closeAllDatabases()
 try {

@@ -404,9 +404,13 @@ export function validateValue(node: JsonSchemaNode, value: unknown, path = ''): 
 
 // ── 运行时契约（duck-typed） ────────────────────────────────────────────
 
-/** 调用方 agent 的最小视图。 */
+/** 调用方 agent 的最小视图（duck-typed，不 import dsh 运行时）。 */
 export interface AgentLike {
-  session?: { cwd?: string; id?: string }
+  /**
+   * 真实 dsh：`Agent.session` 是 `Session`，工作目录挂在它的 `header.cwd`
+   * （`SessionHeader`）；扁平的 `cwd` / `id` 只是 headless 与自测的兼容位。
+   */
+  session?: { header?: { cwd?: string; id?: string }; cwd?: string; id?: string }
   inject?(message: unknown): void
 }
 

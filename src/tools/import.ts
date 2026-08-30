@@ -206,7 +206,7 @@ export function createImportTool(services: DataServices): ToolDefinition {
       if (services.cfg.readOnly) {
         throw new ToolError('dsh-lh-data 处于只读模式（readOnly=true），已拒绝导入', 'READ_ONLY')
       }
-      const scope = services.scopeOf(exec)
+      const scope = await services.scopeOf(exec)
       const absolutePath = resolveInputFile(scope.cwd, args.path)
       await assertReadableFile(absolutePath, services.cfg.maxFileBytes)
       exec.signal.throwIfAborted()

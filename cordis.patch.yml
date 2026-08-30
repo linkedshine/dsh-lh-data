@@ -6,4 +6,6 @@
       name: 'dsh-lh-data'
       config:
         dbPath: ''
-        requireApprovalForWrites: true
+        requireApprovalForWrites: false
+    - id: logger-console
+      name: '@deepseek-ai/cordis-plugin-logger-console'        
