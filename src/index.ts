@@ -18,6 +18,8 @@ import { closeAllDatabases } from './db'
 import { resolveScope } from './scope'
 import { createStore, type DataConfig, type DataServices } from './store'
 import { createToolDefinitions, WRITE_TOOLS } from './tools/registry'
+import { createViewRegistry, type ViewRegistry } from './view'
+import { registerViewRoutes } from './http'
 import { PLUGIN_NAME, type PreToolDecision, type ToolDefinition, type ToolExec, type ToolRegistry } from './tooling'
 
 /** cordis 用于加载/去重的唯一标识。 */
@@ -60,11 +62,36 @@ export const Config: Schema<Config> = Schema.object({
   allowRawSql: Schema.boolean().default(true).description('dataset_query 是否接受原始 sql；关闭后仅结构化查询'),
   maxFileBytes: Schema.number().default(209715200).description('单个导入文件的字节上限'),
   maxInsertRows: Schema.number().default(500).description('dataset_insert 单次插入行数上限'),
-  maxQueryRows: Schema.number().default(200).description('dataset_query 返回行数上限'),
+  maxQueryRows: Schema.number().default(200).description('dataset_query 可服务行数的上限'),
   batchSize: Schema.number().default(100).description('导入批量插入的批次大小'),
   backgroundThresholdRows: Schema.number().default(20000).description('超过该行数自动转后台导入'),
   previewSampleRows: Schema.number().default(100).description('类型推断的采样行数'),
   readOnly: Schema.boolean().default(false).description('只读模式：写类工具直接 deny'),
+
+  // 结果视图（设计文档 §8）：模型只拿片段，完整结果由前端分页拉取。
+  viewMode: Schema.union([
+    Schema.const('auto' as const),
+    Schema.const('always' as const),
+    Schema.const('never' as const),
+  ]).default('auto').description('结果视图模式：auto（超阈值才建视图）/ always / never'),
+  viewThresholdRows: Schema.number().default(20).description('超过该行数启用视图（auto 模式）'),
+  viewThresholdBytes: Schema.number().default(4096).description('片段字节数超过该值启用视图（auto 模式）'),
+  previewRows: Schema.number().default(5).description('模型可见的预览行数'),
+  previewStrategy: Schema.union([
+    Schema.const('head' as const),
+    Schema.const('head-tail' as const),
+  ]).default('head').description('预览行取法：head（前 N 行）/ head-tail（头尾各取）'),
+  previewCellChars: Schema.number().default(40).description('预览单元格截断长度'),
+  previewColumns: Schema.number().default(12).description('预览展示的列数上限'),
+  summaryEnabled: Schema.boolean().default(true).description('是否生成列统计摘要'),
+  summaryMaxColumns: Schema.number().default(24).description('参与摘要的列数上限'),
+  summaryMaxTextColumns: Schema.number().default(3).description('参与取值分布的文本列数上限'),
+  defaultPageSize: Schema.number().default(100).description('前端视图首页行数'),
+  maxPageSize: Schema.number().default(500).description('前端视图单页行数上限'),
+  maxViewRows: Schema.number().default(50000).description('单个视图可翻到的最大行数'),
+  viewTtlMs: Schema.number().default(1800000).description('视图存活时间（毫秒，滑动刷新）'),
+  maxViews: Schema.number().default(64).description('同时存活的视图数（LRU 淘汰）'),
+  viewRoutePrefix: Schema.string().default('/api/lh-data').description('前端分页接口的路由前缀'),
 })
 
 /** 注入系统提示词的使用引导（替代 v1 的 SKILL.md）。 */
@@ -74,6 +101,7 @@ const USAGE_SECTION = [
   '- `dataset_import` 把工作区内的 .xlsx / .xls / .csv 落库；大文件自动转后台任务。',
   '- 先 `dataset_list` 确认目标，再 `dataset_schema` 看列名与类型，然后 `dataset_query` 查询。',
   '- 查询优先用结构化参数（columns / where / orderBy / limit）；只有在需要聚合或连接时才传 `sql`。',
+  '- `dataset_query` 只返回少量预览行与全量统计摘要；结果较大时完整数据由前端表格展示，不要逐页读取全量。',
   '- `dataset_insert` / `dataset_update` / `dataset_delete` / `dataset_drop` 是写操作，会触发人工确认。',
   '- 所有工具用 datasetId 或登记名指代数据集；不要猜测或拼接物理表名。',
 ].join('\n')
@@ -94,14 +122,28 @@ export function validateConfig(cfg: Partial<DataConfig> = {}): Config {
   if (cfg === null || typeof cfg !== 'object') throw new Error('config must be an object')
   const source = cfg as Partial<DataConfig>
   const merged: Config = { ...schemaDefaults(), ...source }
-  for (const key of ['maxFileBytes', 'maxInsertRows', 'maxQueryRows', 'batchSize', 'backgroundThresholdRows', 'previewSampleRows'] as const) {
+  for (const key of [
+    'maxFileBytes', 'maxInsertRows', 'maxQueryRows', 'batchSize', 'backgroundThresholdRows', 'previewSampleRows',
+    'viewThresholdRows', 'viewThresholdBytes', 'previewRows', 'previewCellChars', 'previewColumns',
+    'summaryMaxColumns', 'summaryMaxTextColumns', 'defaultPageSize', 'maxPageSize', 'maxViewRows',
+    'viewTtlMs', 'maxViews',
+  ] as const) {
     const value = merged[key]
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
       throw new Error(`${key} must be a non-negative number`)
     }
   }
-  for (const key of ['perWorkspace', 'requireApprovalForWrites', 'allowRawSql', 'readOnly'] as const) {
+  for (const key of ['perWorkspace', 'requireApprovalForWrites', 'allowRawSql', 'readOnly', 'summaryEnabled'] as const) {
     if (typeof merged[key] !== 'boolean') throw new Error(`${key} must be a boolean`)
+  }
+  if (!['auto', 'always', 'never'].includes(merged.viewMode)) {
+    throw new Error('viewMode must be one of auto / always / never')
+  }
+  if (!['head', 'head-tail'].includes(merged.previewStrategy)) {
+    throw new Error('previewStrategy must be one of head / head-tail')
+  }
+  if (typeof merged.viewRoutePrefix !== 'string' || !merged.viewRoutePrefix.startsWith('/')) {
+    throw new Error('viewRoutePrefix must be an absolute path starting with "/"')
   }
   for (const key of ['dbPath', 'dbUrl', 'authToken'] as const) {
     if (typeof merged[key] !== 'string') throw new Error(`${key} must be a string`)
@@ -182,6 +224,61 @@ function withCallLogging(
   }
 }
 
+/**
+ * 装载前端分页路由（设计文档 §5.5 / §10）。
+ *
+ * - `webServer` 或 `connection` 任一缺失（CLI / TUI 剖面）→ 不注册、不启用视图；
+ * - 路由前缀冲突（webserver 契约抛错）→ 记 warn 并降级，插件其余能力不受影响；
+ * - 注册成功后才把 `views` 挂到 services，避免产生前端取不到的视图。
+ */
+function mountViewRoutes(
+  rt: PluginContext,
+  services: DataServices,
+  views: ViewRegistry,
+  cfg: Config,
+  log: (message: string) => void,
+  warn: (message: string) => void,
+): void {
+  if (typeof rt.inject !== 'function') return
+  if (cfg.viewMode === 'never') {
+    log(`${PLUGIN_NAME}: 结果视图已关闭（viewMode=never）`)
+    return
+  }
+  rt.inject(['webServer', 'connection'], (injected: unknown) => {
+    const host = injected as { webServer?: DataServices['webServer']; connection?: DataServices['connection'] } | null | undefined
+    const { webServer, connection } = host ?? {}
+    if (webServer === undefined || connection === undefined) {
+      log(`${PLUGIN_NAME}: 未检测到 webServer/connection，结果视图降级为纯文本片段`)
+      return
+    }
+    services.webServer = webServer
+    services.connection = connection
+    services.views = views
+
+    let dispose: (() => void) | undefined
+    try {
+      dispose = registerViewRoutes(services)
+    } catch (error) {
+      services.views = undefined
+      warn(`${PLUGIN_NAME}: 结果视图路由注册失败（${errorMessage(error)}）：已降级为纯文本片段`)
+      return
+    }
+    if (dispose === undefined) {
+      services.views = undefined
+      return
+    }
+
+    const release = dispose
+    if (typeof rt.effect === 'function') {
+      rt.effect(() => () => {
+        release()
+        views.clear()
+      })
+    }
+    log(`${PLUGIN_NAME}: 结果视图路由已挂载 ${cfg.viewRoutePrefix}/views（viewMode=${cfg.viewMode}）`)
+  })
+}
+
 export function apply(ctx: Context, config: Config): void {
   const rt = ctx as unknown as PluginContext
   const cfg = config
@@ -198,12 +295,25 @@ export function apply(ctx: Context, config: Config): void {
     scopeOf: exec => resolveScope(rt, cfg, exec),
   }
 
-  // 可选依赖：jobs（后台导入）与 systemPrompt（使用引导）。缺失即降级，不影响装载。
+  // 结果视图注册中心（设计文档 §6）。只有 HTTP 路由注册成功才挂到 services 上，
+  // 这样无浏览器剖面（CLI / TUI）的查询会自动降级为纯文本片段，不会产生取不到的视图。
+  const views = createViewRegistry({
+    routePrefix: cfg.viewRoutePrefix.replace(/\/+$/, ''),
+    defaultPageSize: cfg.defaultPageSize,
+    maxPageSize: cfg.maxPageSize,
+    maxViewRows: cfg.maxViewRows,
+    viewTtlMs: cfg.viewTtlMs,
+    maxViews: cfg.maxViews,
+  })
+
+  // 可选依赖：jobs（后台导入）、systemPrompt（使用引导）、webServer + connection（前端分页）。
+  // 缺失即降级，不影响装载。
   if (typeof rt.inject === 'function') {
     rt.inject(['jobs'], (injected: unknown) => {
       const jobs = (injected as { jobs?: DataServices['jobs'] } | null | undefined)?.jobs
       if (jobs !== undefined) services.jobs = jobs
     })
+    mountViewRoutes(rt, services, views, cfg, log, warn)
     rt.inject(['systemPrompt'], (injected: unknown) => {
       const systemPrompt = (injected as {
         systemPrompt?: { section?(section: PromptSection): () => void }

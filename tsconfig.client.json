@@ -1,18 +1,16 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true,
-    "declaration": true,
     "noEmit": true
   },
-  "include": ["src"],
-  // 浏览器半身单独一套配置（DOM lib + React）：见 tsconfig.client.json。
-  "exclude": ["src/client"]
+  "include": ["src/client"]
 }

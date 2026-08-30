@@ -443,6 +443,8 @@ export interface ToolDefinition {
   output: {
     schema: Record<string, unknown>
     render(args: unknown, value: unknown): ContentBlock[]
+    /** 可选：只给前端的展示元数据（模型不可见）。 */
+    presentationMeta?(args: unknown, value: unknown): JsonValue
   }
   execute(args: unknown, exec: ToolExec): Promise<unknown>
   presentCall?(args: unknown): ToolCallView | undefined
@@ -473,6 +475,11 @@ export interface ToolOutputSpec<P extends ParameterSchemaSpec, V> {
    * 以保证 render 内部拿到精确类型。
    */
   render(args: InferArgs<P>, value: V): ContentBlock[]
+  /**
+   * 只给 UI 的展示元数据（模型不可见）。平台只对顶层调用计算一次，
+   * 因此它必须是 (args, value) 的**纯函数**：任何需要交给前端的东西都要随规范值携带。
+   */
+  presentationMeta?(args: InferArgs<P>, value: V): JsonValue
 }
 
 export interface ToolSpec<P extends ParameterSchemaSpec, V> {
@@ -497,6 +504,7 @@ export function toolDef<const P extends ParameterSchemaSpec, V>(spec: ToolSpec<P
   const outputSchema = compileOutputSchema(spec.output.schema)
   const validate = (args: unknown): string[] => validateValue(parameters, args, '')
   const userRender = spec.output.render
+  const userMeta = spec.output.presentationMeta
   const userExecute = spec.execute
   const userPresentCall = spec.presentCall
 
@@ -508,6 +516,11 @@ export function toolDef<const P extends ParameterSchemaSpec, V>(spec: ToolSpec<P
       schema: outputSchema as unknown as Record<string, unknown>,
       render(args: unknown, value: unknown): ContentBlock[] {
         return userRender(args as InferArgs<P>, value as V)
+      },
+      ...userMeta === undefined ? {} : {
+        presentationMeta(args: unknown, value: unknown): JsonValue {
+          return userMeta(args as InferArgs<P>, value as V)
+        },
       },
     },
     async execute(args: unknown, exec: ToolExec): Promise<unknown> {

@@ -1,0 +1,151 @@
+/**
+ * 前端分页取数的 HTTP 路由 —— 设计文档 §5.5 / §9。
+ *
+ * 只暴露两个能力：按 `viewId` 取一页、按 `viewId` 释放视图。
+ * 接口**不接受任何 SQL**：语句由 `ViewRegistry` 在主机侧持有，因此没有注入面。
+ * 每个请求先过 `connection.requestRejection()`（Host/Origin 围栏 + 浏览器鉴权）。
+ */
+
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { ViewError, type ViewDescriptor } from './view'
+import { selectRows } from './table'
+import type { DataServices } from './store'
+
+/** 路由需要的请求面（duck-typed：只用这几个字段）。 */
+interface RouteRequest {
+  method?: string
+  url?: string
+}
+
+interface RouteResponse {
+  writeHead(status: number, headers?: Record<string, string>): unknown
+  end(body?: string): unknown
+}
+
+const JSON_HEADERS: Record<string, string> = {
+  'content-type': 'application/json; charset=utf-8',
+  'cache-control': 'no-store',
+}
+
+function sendJson(response: RouteResponse, status: number, payload: unknown): void {
+  response.writeHead(status, JSON_HEADERS)
+  response.end(`${JSON.stringify(payload)}\n`)
+}
+
+function sendError(response: RouteResponse, status: number, code: string, message: string): void {
+  sendJson(response, status, { error: { code, message } })
+}
+
+/** `/views/<id>` 或 `/views/<id>/rows`。 */
+function parseViewPath(pathname: string, prefix: string): { viewId: string; rows: boolean } | undefined {
+  if (!pathname.startsWith(`${prefix}/views/`)) return undefined
+  const rest = pathname.slice(`${prefix}/views/`.length).replace(/\/+$/, '')
+  const [viewId, tail] = rest.split('/')
+  if (viewId === undefined || viewId.length === 0) return undefined
+  if (tail === undefined) return { viewId, rows: false }
+  if (tail === 'rows') return { viewId, rows: true }
+  return undefined
+}
+
+function queryInt(raw: string | null): number | undefined {
+  if (raw === null || raw.trim().length === 0) return undefined
+  const n = Number(raw)
+  return Number.isFinite(n) ? Math.floor(n) : undefined
+}
+
+/**
+ * 注册视图路由。返回 disposer；宿主缺失（`webServer` / `connection` 任一不可用）时返回 undefined。
+ * 路由路径重复会抛错（webserver 的契约），由调用方决定如何降级。
+ */
+export function registerViewRoutes(services: DataServices): (() => void) | undefined {
+  const { webServer, connection, views, cfg } = services
+  if (webServer === undefined || connection === undefined || views === undefined) return undefined
+  const prefix = cfg.viewRoutePrefix.replace(/\/+$/, '')
+
+  const handler = async (rawRequest: unknown, rawResponse: unknown): Promise<void> => {
+    const request = rawRequest as RouteRequest & IncomingMessage
+    const response = rawResponse as RouteResponse & ServerResponse
+
+    const rejection = connection.requestRejection(request)
+    if (rejection !== undefined) {
+      sendError(response, rejection, rejection === 401 ? 'UNAUTHORIZED' : 'FORBIDDEN', 'unauthorized')
+      return
+    }
+
+    const method = (request.method ?? 'GET').toUpperCase()
+    const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
+    const parsed = parseViewPath(pathname, prefix)
+    if (parsed === undefined) {
+      sendError(response, 404, 'NOT_FOUND', 'not found')
+      return
+    }
+    if (method !== 'GET' && method !== 'DELETE') {
+      sendError(response, 405, 'METHOD_NOT_ALLOWED', 'only GET and DELETE are allowed')
+      return
+    }
+
+    if (method === 'DELETE') {
+      sendJson(response, 200, { viewId: parsed.viewId, revoked: views.revoke(parsed.viewId) })
+      return
+    }
+
+    try {
+      const view = views.get(parsed.viewId)
+      if (view === undefined) {
+        // 未注册与已过期对外统一 404，避免探测视图是否存在。
+        throw new ViewError('VIEW_NOT_FOUND', 404, '视图不存在或已过期（请重新查询）')
+      }
+      // 归属与就绪状态按视图绑定的 scope 重新断言（defense-in-depth）。
+      await services.store.require(view.scopeKey, view.datasetId, { requireReady: true })
+
+      if (!parsed.rows) {
+        const meta: Omit<ViewDescriptor, 'endpoint'> & { endpoint: string } = {
+          kind: 'dataset-view',
+          viewId: view.viewId,
+          endpoint: `${prefix}/views/${view.viewId}/rows`,
+          datasetId: view.datasetId,
+          name: view.name,
+          columns: view.columns,
+          totalRows: view.totalRows,
+          pageSize: services.cfg.defaultPageSize,
+          maxPageSize: services.cfg.maxPageSize,
+          stable: view.stable,
+          sortable: view.sortable,
+          expiresAt: view.expiresAt,
+        }
+        sendJson(response, 200, meta)
+        return
+      }
+
+      const params = new URL(request.url ?? '/', 'http://localhost').searchParams
+      const order = params.get('order')
+      const statement = views.page(parsed.viewId, {
+        page: queryInt(params.get('page')),
+        pageSize: queryInt(params.get('pageSize')),
+        sort: params.get('sort') ?? undefined,
+        order: order === 'desc' || order === 'asc' ? order : undefined,
+      })
+      const db = await services.store.database(view.scopeKey)
+      const { rows, columns } = await selectRows(db, statement.sql, [...statement.params])
+      sendJson(response, 200, {
+        viewId: view.viewId,
+        columns,
+        rows,
+        page: statement.page,
+        pageSize: statement.pageSize,
+        totalRows: statement.totalRows,
+        totalPages: statement.totalPages,
+        stable: statement.stable,
+      })
+    } catch (error) {
+      if (error instanceof ViewError) {
+        sendError(response, error.status, error.code, error.message)
+        return
+      }
+      // 错误信息脱敏：不回显 SQL 与物理表名。
+      sendError(response, 500, 'QUERY_FAILED', '分页查询失败')
+    }
+  }
+
+  return webServer.register({ kind: 'prefix', path: `${prefix}/views`, handler })
+}

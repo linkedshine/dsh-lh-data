@@ -268,13 +268,14 @@ check('列数 = 5', schema.value.columns.length === 5, `实际 ${schema.value.co
 section('集成：dataset_query（结构化）')
 const queried = await call('dataset_query', { dataset: datasetId, columns: ['名称', '数量'], where: '数量 >= 40', orderBy: '数量 DESC' })
 console.log(queried.text)
-check('结构化查询命中 2 行', queried.value.rowCount === 2, `实际 ${queried.value.rowCount}`)
-check('排序生效（螺栓 120 在前）', queried.value.rows[0]?.名称 === '螺栓', JSON.stringify(queried.value.rows[0]))
+check('结构化查询命中 2 行', queried.value.totalRows === 2, `实际 ${queried.value.totalRows}`)
+check('小结果集不建视图（片段即全量）', queried.value.view === undefined && queried.value.preview.rows.length === 2, JSON.stringify(queried.value.view))
+check('排序生效（螺栓 120 在前）', queried.value.preview.rows[0]?.名称 === '螺栓', JSON.stringify(queried.value.preview.rows[0]))
 
 section('集成：dataset_query（原始 sql，用 ds 别名）')
 const bySql = await call('dataset_query', { dataset: datasetId, sql: 'SELECT 名称, 数量 FROM ds WHERE 数量 > 10 ORDER BY 数量 DESC' })
 console.log(bySql.text)
-check('sql 分支命中 2 行', bySql.value.rowCount === 2, `实际 ${bySql.value.rowCount}`)
+check('sql 分支命中 2 行', bySql.value.totalRows === 2, `实际 ${bySql.value.totalRows}`)
 check('结果不含物理表名', !JSON.stringify(bySql.value).includes('d_'))
 
 section('集成：dataset_insert / update / delete')
@@ -282,11 +283,11 @@ const inserted = await call('dataset_insert', { dataset: datasetId, rows: [{ 物
 console.log(inserted.text)
 check('插入 1 行后共 4 行', inserted.value.rowCount === 4, `实际 ${inserted.value.rowCount}`)
 
-const newRow = (await call('dataset_query', { dataset: datasetId, where: '名称 = \'焊条\'' })).value.rows[0]
+const newRow = (await call('dataset_query', { dataset: datasetId, where: '名称 = \'焊条\'' })).value.preview.rows[0]
 const updated = await call('dataset_update', { dataset: datasetId, rowId: newRow._row_id, data: { 单价: 4.5 } })
 console.log(updated.text)
 check('更新成功', updated.value.updated === true)
-const afterUpdate = (await call('dataset_query', { dataset: datasetId, where: '名称 = \'焊条\'' })).value.rows[0]
+const afterUpdate = (await call('dataset_query', { dataset: datasetId, where: '名称 = \'焊条\'' })).value.preview.rows[0]
 check('单价已改为 4.5', Number(afterUpdate.单价) === 4.5, String(afterUpdate.单价))
 
 const deleted = await call('dataset_delete', { dataset: datasetId, rowId: newRow._row_id })
@@ -393,6 +394,7 @@ try {
   console.log(`  ! 临时目录清理失败（可手动删除 ${workspace}）：${error.message}`)
 }
 
+console.log(`RESULT passed=${passed} failed=${failures.length}`)
 console.log(`\n通过 ${passed} 项，失败 ${failures.length} 项`)
 if (failures.length > 0) {
   console.log('失败项：')

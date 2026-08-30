@@ -9,6 +9,10 @@
     ".": {
       "types": "./lib/index.d.ts",
       "import": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./src/client/index.ts",
+      "default": "./lib/client.js"
     }
   },
   "files": [
@@ -17,13 +21,21 @@
     "cordis.patch.yml"
   ],
   "scripts": {
+    "prebuild": "node -e \"require('node:fs').rmSync('lib', { recursive: true, force: true })\"",
     "build": "tsdown",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "import": "node examples/run-import.mjs"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "typecheck:host": "tsc -p tsconfig.json --noEmit",
+    "typecheck:client": "tsc -p tsconfig.client.json --noEmit",
+    "import": "node examples/run-import.mjs",
+    "view": "node examples/run-view.mjs"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "external": ["react"]
     }
   },
   "dependencies": {
@@ -36,8 +48,9 @@
     "@deepseek-ai/cordis": "^4.0.1",
     "@types/node": "^24.0.0",
     "@types/papaparse": "^5.5.2",
-    "typescript": "^5.5.4",
-    "tsdown": "^0.4.0"
+    "@types/react": "^18.3.31",
+    "tsdown": "^0.4.0",
+    "typescript": "^5.5.4"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

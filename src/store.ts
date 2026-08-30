@@ -9,6 +9,7 @@ import { resolveDatabase, shortHash, type Database, type Row } from './db'
 import type { ColumnInfo } from './parse'
 import type { ScopeContext } from './scope'
 import type { ToolExec } from './tooling'
+import type { ViewRegistry } from './view'
 
 /** 插件配置（结构子集由 index.ts 的 `Config` 复用，避免 tools → index 的类型循环）。 */
 export interface DataConfig {
@@ -29,6 +30,25 @@ export interface DataConfig {
   backgroundThresholdRows: number
   previewSampleRows: number
   readOnly: boolean
+
+  // ── 结果视图（设计文档 §8） ──
+  /** 视图模式：auto（超阈值才建视图）/ always / never。 */
+  viewMode: 'auto' | 'always' | 'never'
+  viewThresholdRows: number
+  viewThresholdBytes: number
+  previewRows: number
+  previewStrategy: 'head' | 'head-tail'
+  previewCellChars: number
+  previewColumns: number
+  summaryEnabled: boolean
+  summaryMaxColumns: number
+  summaryMaxTextColumns: number
+  defaultPageSize: number
+  maxPageSize: number
+  maxViewRows: number
+  viewTtlMs: number
+  maxViews: number
+  viewRoutePrefix: string
 }
 
 export type DatasetStatus = 'importing' | 'ready' | 'failed'
@@ -263,6 +283,24 @@ export interface JobRegistryLike {
   }): string
 }
 
+/**
+ * `dsh-host-webserver` 的最小视图（duck-typed，避免依赖 dsh 运行时）。
+ * 缺失时（CLI / TUI 剖面）不注册任何路由，视图能力整体降级。
+ */
+export interface WebServerLike {
+  register(route: {
+    kind: 'exact' | 'prefix'
+    path: string
+    handler(request: unknown, response: unknown): void | Promise<void>
+  }): () => void
+}
+
+/** `dsh-client-connection` 的最小视图：给自建路由复用平台鉴权。 */
+export interface ConnectionLike {
+  /** 通过返回 undefined；否则返回应写入的 HTTP 状态码。 */
+  requestRejection(request: unknown): 401 | 403 | undefined
+}
+
 /** 注入给工具的运行时依赖。 */
 export interface DataServices {
   cfg: DataConfig
@@ -271,6 +309,12 @@ export interface DataServices {
   scopeOf(exec: ToolExec): Promise<ScopeContext>
   /** 可选：`ctx.jobs` 不可用时后台导入降级为前台执行。 */
   jobs?: JobRegistryLike
+  /** 结果视图注册中心（设计文档 §6）。 */
+  views?: ViewRegistry
+  /** 可选：HTTP 路由宿主；缺失即不提供前端分页。 */
+  webServer?: WebServerLike
+  /** 可选：连接服务；缺失即不注册路由（自建路由必须有鉴权手段）。 */
+  connection?: ConnectionLike
 }
 
 export interface ResolvedDataset {
