@@ -1,0 +1,47 @@
+{
+  "name": "dsh-lh-data",
+  "version": "0.1.0",
+  "description": "dsh 插件：把工作区 Excel/CSV 导入本地 Turso（libSQL），并以句柄化的 dataset_* 工具做增删改查。",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js"
+    }
+  },
+  "files": [
+    "lib/",
+    "src/",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "import": "node examples/run-import.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@libsql/client": "^0.17.4",
+    "papaparse": "^5.7.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@types/node": "^24.0.0",
+    "@types/papaparse": "^5.5.2",
+    "typescript": "^5.5.4",
+    "tsdown": "^0.4.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

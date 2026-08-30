@@ -1,0 +1,6 @@
+- insert:
+    - id: lh-data
+      name: 'D:/fastwork/projects/node/dsh-lh-data'
+      config:
+        dbPath: ''
+        requireApprovalForWrites: true
