@@ -7,6 +7,7 @@
 
 import { renderColumns, renderDatasetList, renderRows } from '../render'
 import type { ColumnInfo } from '../parse'
+import type { Row } from '../db'
 import { resolveDataset, type DataServices } from '../store'
 import { selectRows } from '../table'
 import { buildStructuredQuery, substituteDatasetAlias, validateReadOnlyQuery } from '../sql'
@@ -46,7 +47,7 @@ export interface QueryOutput {
   datasetId: string
   name: string
   columns: string[]
-  rows: Record<string, unknown>[]
+  rows: Row[]
   rowCount: number
   limit: number
   offset: number

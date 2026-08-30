@@ -13,7 +13,11 @@ import { mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-export type Row = Record<string, unknown>
+/** 无损 JSON 值（与 dsh 的 `snapshotJsonValue` 边界一致）。 */
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
+
+/** 一行查询结果：键为列名，值保证是无损 JSON。 */
+export type Row = { [key: string]: JsonValue }
 
 export interface RunResult {
   changes: number
@@ -50,8 +54,11 @@ export class Database {
 
   prepare(sql: string): PreparedStatement {
     return {
-      all: (...params: unknown[]) => this.run(sql, params, result => result.rows as Row[]),
-      get: (...params: unknown[]) => this.run(sql, params, result => (result.rows[0] as Row | undefined) ?? undefined),
+      all: async (...params: unknown[]) => (await this.run(sql, params, result => result.rows)).map(toJsonRow),
+      get: async (...params: unknown[]) => {
+        const row = await this.run(sql, params, result => result.rows[0] as Row | undefined)
+        return row === undefined ? undefined : toJsonRow(row)
+      },
       run: (...params: unknown[]) => this.run(sql, params, result => ({
         changes: Number(result.rowsAffected ?? 0),
         lastInsertRowid: result.lastInsertRowid != null ? Number(result.lastInsertRowid) : 0,
@@ -94,6 +101,59 @@ export class Database {
     }
     return this.initPromise
   }
+}
+
+// ── 返回值规整（无损 JSON 边界） ─────────────────────────────────────────
+
+/** 嵌套上限：防御性兜底（数据库返回值不会真的这么深）。 */
+const MAX_JSON_DEPTH = 32
+
+/**
+ * 把 libSQL 的返回值规整成无损 JSON。
+ *
+ * libSQL 的行对象同时挂着具名列与**不可枚举**的数字索引 `0..n` 和 `length`
+ * （行既能按名也能按位置访问）。dsh 的 `snapshotJsonValue` 把「存在不可枚举的
+ * 自有属性」判为有损 —— 工具返回值会被直接拒为 `INVALID_TOOL_OUTPUT`
+ * （`value is not lossless JSON`）。这里统一重建为只含可枚举字符串键的纯对象；
+ * 顺带把 JSON 无法无损表达的值转成 JSON 安全形式：
+ * BigInt（超安全整数范围转字符串）、BLOB（base64）、NaN / ±Infinity（null）、
+ * `-0`（0）、Date（ISO 字符串）、function / symbol（null）。
+ */
+export function toJsonValue(value: unknown, depth = 0): JsonValue {
+  if (value === null || value === undefined) return null
+  const kind = typeof value
+  if (kind === 'string' || kind === 'boolean') return value as JsonValue
+  if (kind === 'number') {
+    const number = value as number
+    if (!Number.isFinite(number)) return null
+    return Object.is(number, -0) ? 0 : number
+  }
+  if (kind === 'bigint') {
+    const big = value as bigint
+    const min = BigInt(Number.MIN_SAFE_INTEGER)
+    const max = BigInt(Number.MAX_SAFE_INTEGER)
+    return big >= min && big <= max ? Number(big) : big.toString()
+  }
+  if (depth > MAX_JSON_DEPTH) return null
+  if (kind !== 'object') return null
+  if (value instanceof Date) return value.toISOString()
+  if (value instanceof Uint8Array || value instanceof ArrayBuffer) {
+    return Buffer.from(value instanceof ArrayBuffer ? new Uint8Array(value) : value).toString('base64')
+  }
+  if (Array.isArray(value)) return value.map(entry => toJsonValue(entry, depth + 1))
+  const record = value as Record<string, unknown>
+  const out: { [key: string]: JsonValue } = {}
+  // 只遍历可枚举的字符串键：libSQL 的不可枚举数字索引与 length 会被自然丢弃。
+  for (const key of Object.keys(record)) out[key] = toJsonValue(record[key], depth + 1)
+  return out
+}
+
+/** 一行 → 只含可枚举字符串键的纯对象。 */
+export function toJsonRow(row: unknown): Row {
+  const value = toJsonValue(row)
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Row
+    : {}
 }
 
 /** libSQL 只能绑定 number/string/bigint/Buffer/Date/null，其余序列化为 JSON。 */
