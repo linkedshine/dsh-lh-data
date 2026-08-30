@@ -18,7 +18,7 @@ import { closeAllDatabases } from './db'
 import { resolveScope } from './scope'
 import { createStore, type DataConfig, type DataServices } from './store'
 import { createToolDefinitions, WRITE_TOOLS } from './tools/registry'
-import { PLUGIN_NAME, type PreToolDecision, type ToolExec, type ToolRegistry } from './tooling'
+import { PLUGIN_NAME, type PreToolDecision, type ToolDefinition, type ToolExec, type ToolRegistry } from './tooling'
 
 /** cordis 用于加载/去重的唯一标识。 */
 export const name: string = PLUGIN_NAME
@@ -125,11 +125,71 @@ async function delegate(next: (() => Promise<PreToolDecision>) | undefined): Pro
   return (await next()) ?? { kind: 'allow' }
 }
 
+// ── 工具调用日志 ──────────────────────────────────────────────────────────
+
+/** 单个字符串参数的预览上限（dataset_insert 的 rows 可能很大，禁止整包进日志）。 */
+const MAX_ARG_PREVIEW = 80
+
+function previewText(value: string): string {
+  return value.length > MAX_ARG_PREVIEW ? `${value.slice(0, MAX_ARG_PREVIEW)}…(${value.length})` : value
+}
+
+/** 参数摘要：只记键名与规模，避免把整表数据写进日志。 */
+function summarizeArgs(args: unknown): string {
+  if (typeof args !== 'object' || args === null) return String(args)
+  const record = args as Record<string, unknown>
+  const parts = Object.keys(record).map(key => {
+    const value = record[key]
+    if (typeof value === 'string') return `${key}=${previewText(value)}`
+    if (Array.isArray(value)) return `${key}[${value.length}]`
+    if (typeof value === 'object' && value !== null) return `${key}{${Object.keys(value).length}}`
+    return `${key}=${String(value)}`
+  })
+  return parts.length > 0 ? parts.join(' ') : '(no args)'
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return `${error.name}: ${error.message}`
+  return String(error)
+}
+
+/**
+ * 给工具的 `execute` 包一层开始/结束日志（成功、失败、取消各一条，含耗时）。
+ * 只观测不介入：异常原样向上抛，返回值原样传出。
+ */
+function withCallLogging(
+  definition: ToolDefinition,
+  log: (message: string) => void,
+  warn: (message: string) => void,
+): ToolDefinition {
+  const execute = definition.execute
+  return {
+    ...definition,
+    async execute(args: unknown, exec: ToolExec): Promise<unknown> {
+      const startedAt = Date.now()
+      log(`${definition.name} start ${summarizeArgs(args)}`)
+      try {
+        const value = await execute(args, exec)
+        const elapsed = Date.now() - startedAt
+        if (exec.signal?.aborted === true) warn(`${definition.name} end aborted in ${elapsed}ms`)
+        else log(`${definition.name} end ok in ${elapsed}ms`)
+        return value
+      } catch (error) {
+        warn(`${definition.name} end error in ${Date.now() - startedAt}ms: ${errorMessage(error)}`)
+        throw error
+      }
+    },
+  }
+}
+
 export function apply(ctx: Context, config: Config): void {
   const rt = ctx as unknown as PluginContext
   const cfg = config
   const log = (message: string): void => {
     rt.logger?.info?.(message)
+  }
+  const warn = (message: string): void => {
+    rt.logger?.warn?.(message)
   }
 
   const services: DataServices = {
@@ -157,7 +217,9 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   // 注册即副作用：把 disposer 挂到插件 fiber，保证 HMR / 卸载时注销工具。
-  const unregister = createToolDefinitions(services).map(definition => rt.tools.register(definition))
+  const unregister = createToolDefinitions(services)
+    .map(definition => withCallLogging(definition, log, warn))
+    .map(definition => rt.tools.register(definition))
   if (typeof rt.effect === 'function') {
     rt.effect(() => () => {
       for (const dispose of unregister) dispose()
