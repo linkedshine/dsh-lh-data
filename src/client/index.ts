@@ -13,6 +13,8 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import { ADMIN_SECTION_ID, ADMIN_SECTION_LABEL, ADMIN_SECTION_ORDER } from '../admin-contract'
+import { DatasetSettingsSection } from './settings/Section'
 
 /** 本插件注册的工具名，也是 `tool.call.toolview` 的 keyed 派发键。 */
 const TOOL_KEY = 'dataset_query'
@@ -22,7 +24,8 @@ const TOOLVIEW_SLOT = 'tool.call.toolview'
 
 interface SlotRegistry {
   inject(slot: string, setup: () => () => void): void
-  register(spec: { name: string; key: string }, component: unknown): () => void
+  // spec 是开放对象：toolview 用 key，settings.section 用 id/order/label 等。
+  register(spec: { name: string; [key: string]: unknown }, component: unknown): () => void
 }
 
 interface ToolCallViewProps {
@@ -123,7 +126,7 @@ function DatasetViewCard(props: ToolCallViewProps): React.ReactElement | null {
     const controller = new AbortController()
     const id = requestId.current + 1
     requestId.current = id
-    setState(previous => (previous.status === 'ready' ? { ...previous, status: 'loading' } : { status: 'loading' }))
+    setState(previous => previous.status === 'ready' ? { ...previous, status: 'loading' } : previous)
 
     const url = new URL(meta.endpoint, window.location.origin)
     url.searchParams.set('page', String(page))
@@ -181,6 +184,8 @@ function DatasetViewCard(props: ToolCallViewProps): React.ReactElement | null {
   const rows = payload?.rows ?? []
   const totalPages = payload?.totalPages ?? Math.max(1, Math.ceil(meta.totalRows / meta.pageSize))
   const busy = state.status === 'loading' && payload === undefined
+  // 服务端把 page 夹到分页边界内，首屏拿到 totalPages 后即可反推可浏览的行数上限。
+  const servableRows = payload === undefined ? meta.totalRows : payload.totalPages * payload.pageSize
 
   const head = React.createElement('tr', null, ...columns.map(column => React.createElement(
     'th',
@@ -202,6 +207,9 @@ function DatasetViewCard(props: ToolCallViewProps): React.ReactElement | null {
     React.createElement('div', { style: styles.head },
       React.createElement('span', { style: styles.title }, `数据集 ${meta.name}`),
       React.createElement('span', null, `共 ${meta.totalRows} 行 · ${meta.columns.length} 列`),
+      servableRows < meta.totalRows
+        ? React.createElement('span', { style: styles.muted }, `（仅可浏览前 ${servableRows} 行）`)
+        : null,
       state.status === 'error' ? React.createElement('span', { style: styles.error }, state.message ?? '') : null,
       busy ? React.createElement('span', { style: styles.muted }, '加载中…') : null,
     ),
@@ -232,4 +240,10 @@ export function apply(ctx: ClientContext): void {
   const slots = (ctx as unknown as { slots?: SlotRegistry }).slots
   if (slots === undefined) return
   slots.inject(TOOLVIEW_SLOT, () => slots.register({ name: TOOLVIEW_SLOT, key: TOOL_KEY }, DatasetViewCard))
+  // 设置面板新增「数据集」菜单（外部插件可自由注册该 list slot）。
+  slots.inject('settings.section', () =>
+    slots.register(
+      { name: 'settings.section', id: ADMIN_SECTION_ID, order: ADMIN_SECTION_ORDER, label: ADMIN_SECTION_LABEL },
+      DatasetSettingsSection,
+    ))
 }

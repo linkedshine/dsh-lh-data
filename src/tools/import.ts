@@ -229,6 +229,7 @@ export function createImportTool(services: DataServices): ToolDefinition {
         name,
         tableName,
         sourcePath: absolutePath,
+        description: null,
         rowCount: 0,
         columns: parsed.columns,
         status: 'importing',

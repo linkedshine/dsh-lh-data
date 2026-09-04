@@ -209,14 +209,22 @@ export function defaultDbDirectory(): string {
 }
 
 /**
+ * 不含 scope 后缀的库 URL —— 连接优先级链的终点：
+ * `dbUrl` > `dbPath` > `SQLITE_PATH` > `TURSO_DATABASE_URL` > 默认本地文件。
+ */
+export function baseDbUrl(cfg: DbConfig): string {
+  const explicit = cfg.dbUrl.trim() || cfg.dbPath.trim()
+  const fromEnv = process.env.SQLITE_PATH || process.env.TURSO_DATABASE_URL || ''
+  const raw = explicit || fromEnv
+  return raw.length > 0 ? normalizeDbUrl(raw) : `file:${toPosix(join(defaultDbDirectory(), 'data.db'))}`
+}
+
+/**
  * 连接优先级：`dbUrl` > `dbPath` > `SQLITE_PATH` > `TURSO_DATABASE_URL` > 默认本地文件。
  * `perWorkspace` 且是本地库时，为每个 scope 派生独立库文件。
  */
 export function resolveDbUrl(cfg: DbConfig, scopeKey: string): string {
-  const explicit = cfg.dbUrl.trim() || cfg.dbPath.trim()
-  const fromEnv = process.env.SQLITE_PATH || process.env.TURSO_DATABASE_URL || ''
-  const raw = explicit || fromEnv
-  const url = raw.length > 0 ? normalizeDbUrl(raw) : `file:${toPosix(join(defaultDbDirectory(), 'data.db'))}`
+  const url = baseDbUrl(cfg)
   if (isRemoteUrl(url)) return url
   return cfg.perWorkspace ? withScopeSuffix(url, shortHash(scopeKey)) : url
 }
@@ -227,9 +235,25 @@ function resolveAuthToken(cfg: DbConfig): string | undefined {
 
 const databases = new Map<string, Database>()
 
+/**
+ * 目录库：**不做 scope 分片**的固定库，供工作区注册表使用。
+ *
+ * `perWorkspace=false` 时它与业务库是同一个 URL（同一个 `Database` 实例，
+ * 注册表与 datasets 表共存）；`perWorkspace=true` 时它是没有后缀的那份
+ * `data.db`，与各工作区的 `data-<hash>.db` 并列。
+ * 远程库（`libsql://`）不做分片，两种情况都是同一个库。
+ */
+export function resolveCatalogDatabase(cfg: DbConfig): Database {
+  return resolveByUrl(cfg, baseDbUrl(cfg))
+}
+
 /** 惰性建立连接（不在 apply() 里同步建立），按 url 缓存单例。 */
 export function resolveDatabase(cfg: DbConfig, scopeKey: string): Database {
-  const url = resolveDbUrl(cfg, scopeKey)
+  return resolveByUrl(cfg, resolveDbUrl(cfg, scopeKey))
+}
+
+/** 按已解析的 url 建立/复用连接（缓存键就是 url）。 */
+function resolveByUrl(cfg: DbConfig, url: string): Database {
   const existing = databases.get(url)
   if (existing !== undefined) return existing
   const localPath = localPathOf(url)

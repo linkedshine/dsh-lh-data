@@ -1,11 +1,7 @@
 # 裸包名由 profile 的 node_modules 解析（`dsh plugin --profile web add <path>` 安装后生效），
-# 与 dsh-lh-judge 一致。绝对 Windows 路径（D:/...）会被 ESM 当成协议名而报
-# ERR_UNSUPPORTED_ESM_URL_SCHEME，不可写在这里。
 - insert:
     - id: lh-data
       name: 'dsh-lh-data'
       config:
         dbPath: ''
         requireApprovalForWrites: false
-    - id: logger-console
-      name: '@deepseek-ai/cordis-plugin-logger-console'        

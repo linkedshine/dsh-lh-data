@@ -23,7 +23,7 @@ import {
   type ColumnSummary,
   type PreviewOptions,
 } from '../preview'
-import { toolDef, ToolError, type ToolDefinition, type ToolExec } from '../tooling'
+import { debugLog, toolDef, ToolError, type ToolDefinition, type ToolExec } from '../tooling'
 
 const DATASET_PARAM = {
   type: 'string',
@@ -50,6 +50,7 @@ export interface ListOutput {
 export interface SchemaOutput {
   datasetId: string
   name: string
+  description: string | null
   rowCount: number
   status: string
   columns: ColumnInfo[]
@@ -174,6 +175,7 @@ export function createSchemaTool(services: DataServices): ToolDefinition {
         properties: {
           datasetId: { type: 'string' },
           name: { type: 'string' },
+          description: { oneOf: [{ type: 'string' }, { type: 'null' }] },
           rowCount: { type: 'integer' },
           status: { type: 'string' },
           columns: {
@@ -211,6 +213,7 @@ export function createSchemaTool(services: DataServices): ToolDefinition {
       return {
         datasetId: record.id,
         name: record.name,
+        description: record.description,
         rowCount: record.rowCount,
         status: record.status,
         columns: record.columns,
@@ -327,20 +330,22 @@ export function createQueryTool(services: DataServices): ToolDefinition {
        */
       presentationMeta: (_args, value: QueryOutput) => {
         if (value.view === undefined) return null
-        return {
+        const meta = {
           kind: 'dataset-view',
           viewId: value.view.viewId,
           endpoint: value.view.endpoint,
           datasetId: value.datasetId,
           name: value.name,
           columns: value.columns,
-          totalRows: value.totalRows,
+          totalRows: value.matchedRows,
           pageSize: value.view.pageSize,
           maxPageSize: value.view.maxPageSize,
           stable: value.view.stable,
           sortable: value.view.sortable,
           expiresAt: value.view.expiresAt,
         }
+        debugLog('read:meta', meta)
+        return meta
       },
     },
     presentCall: args => ({ card: 'generic', title: `查询数据集：${args.dataset}`, kind: 'read' }),
@@ -413,6 +418,14 @@ export function createQueryTool(services: DataServices): ToolDefinition {
       const rowCap = canView ? Math.min(plan.declaredLimit ?? maxViewRows, maxViewRows) : plan.rowCap
       const totalRows = Math.max(0, Math.min(matched, rowCap))
       const previewOffset = Math.max(0, plan.previewOffset)
+      debugLog('read:plan', {
+        canView,
+        matched,
+        rowCap,
+        maxViewRows,
+        declaredLimit: plan.declaredLimit,
+        totalRows,
+      })
 
       // 探针：覆盖「建视图时的头段」；降级（无视图）时退化为旧行为，最多取满 rowCap。
       const probeLimit = canView
@@ -471,13 +484,19 @@ export function createQueryTool(services: DataServices): ToolDefinition {
           tableName: record.tableName,
           columns,
           countSql: plan.countSql,
-          totalRows,
+          totalRows: matched,
           rowCap,
           sortable: resultColumns.filter(name => registered.has(name)),
           stable: plan.stable,
           baseSql: plan.baseSql,
           ...plan.baseOrder === undefined ? {} : { baseOrder: plan.baseOrder },
           ...plan.tie === undefined ? {} : { tie: plan.tie },
+        })
+        debugLog('read:view', {
+          viewId: descriptor.viewId,
+          totalRows: descriptor.totalRows,
+          rowCap,
+          matched,
         })
         view = {
           viewId: descriptor.viewId,

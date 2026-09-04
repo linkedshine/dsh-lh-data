@@ -16,6 +16,13 @@
 /** 插件标识：回注消息与后台任务的 `source.plugin` 字段。 */
 export const PLUGIN_NAME = 'dsh-lh-data'
 
+/**
+ * 视图分页排查用的临时后台日志（走 stdout），定位完成后删除本函数及其全部调用点。
+ */
+export function debugLog(scope: string, payload: unknown): void {
+  console.log(`[${PLUGIN_NAME}:${scope}]`, JSON.stringify(payload))
+}
+
 // ── JSON 值与模型可见内容 ────────────────────────────────────────────────
 
 export type JsonScalar = string | number | boolean | null

@@ -6,6 +6,7 @@
  */
 
 import { resolveDatabase, shortHash, type Database, type Row } from './db'
+import { createScopeRegistry, type ScopeRegistry } from './scope-registry'
 import type { ColumnInfo } from './parse'
 import type { ScopeContext } from './scope'
 import type { ToolExec } from './tooling'
@@ -49,6 +50,14 @@ export interface DataConfig {
   viewTtlMs: number
   maxViews: number
   viewRoutePrefix: string
+
+  // ── 设置页管理接口（新增） ──
+  /** 是否挂载设置页管理接口（关闭后路由不注册，前端显示不可用）。 */
+  adminEnabled: boolean
+  /** 管理接口请求体字节上限。 */
+  adminMaxBodyBytes: number
+  /** 聚合列表扫描的数据集上限，超限即截断并提示。 */
+  adminMaxDatasets: number
 }
 
 export type DatasetStatus = 'importing' | 'ready' | 'failed'
@@ -59,6 +68,8 @@ export interface DatasetRecord {
   name: string
   tableName: string
   sourcePath: string | null
+  /** 用户可编辑的说明（设置页「改描述」的落点）；未填为 null。 */
+  description: string | null
   rowCount: number
   columns: ColumnInfo[]
   status: DatasetStatus
@@ -108,6 +119,7 @@ CREATE TABLE IF NOT EXISTS datasets (
   name TEXT NOT NULL,
   table_name TEXT NOT NULL UNIQUE,
   source_path TEXT,
+  description TEXT,
   row_count INTEGER NOT NULL DEFAULT 0,
   columns TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL DEFAULT 'importing',
@@ -118,6 +130,25 @@ CREATE TABLE IF NOT EXISTS datasets (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_datasets_scope_name ON datasets(scope_key, name);
 CREATE INDEX IF NOT EXISTS idx_datasets_scope_created ON datasets(scope_key, created_at DESC);
 `
+
+/**
+ * 增量迁移：`CREATE TABLE IF NOT EXISTS` 建不出新列，升级前已有的库要靠 ALTER 补。
+ * 跑在已经建好表的库上时必然报 duplicate column，吞掉即可（幂等）。
+ */
+const MIGRATION_SQL: readonly string[] = [
+  'ALTER TABLE datasets ADD COLUMN description TEXT',
+]
+
+/** 迁移失败即停：只放过「列已存在」，其余（权限、磁盘）必须暴露。 */
+async function runMigrations(db: Database): Promise<void> {
+  for (const sql of MIGRATION_SQL) {
+    try {
+      await db.exec(sql)
+    } catch {
+      // duplicate column name —— 该库已经是新结构。
+    }
+  }
+}
 
 function rowToRecord(row: Row): DatasetRecord {
   let columns: ColumnInfo[] = []
@@ -133,6 +164,7 @@ function rowToRecord(row: Row): DatasetRecord {
     name: String(row.name),
     tableName: String(row.table_name),
     sourcePath: row.source_path === null || row.source_path === undefined ? null : String(row.source_path),
+    description: row.description === null || row.description === undefined ? null : String(row.description),
     rowCount: Number(row.row_count ?? 0),
     columns,
     status: String(row.status ?? 'ready') as DatasetStatus,
@@ -145,13 +177,18 @@ function rowToRecord(row: Row): DatasetRecord {
 export class DatasetStore {
   private readonly initialized = new Set<string>()
 
-  constructor(private readonly cfg: DataConfig) {}
+  constructor(
+    private readonly cfg: DataConfig,
+    /** 工作区注册表（跨工作区聚合枚举来源）；默认随配置自动创建。 */
+    public readonly scopes: ScopeRegistry = createScopeRegistry(cfg),
+  ) {}
 
-  /** 该 scope 对应的库连接（幂等建表）。 */
+  /** 该 scope 对应的库连接（幂等建表 + 增量迁移）。 */
   async database(scopeKey: string): Promise<Database> {
     const db = resolveDatabase(this.cfg, scopeKey)
     if (!this.initialized.has(scopeKey)) {
       await db.exec(SCHEMA_SQL)
+      await runMigrations(db)
       this.initialized.add(scopeKey)
     }
     return db
@@ -210,10 +247,12 @@ export class DatasetStore {
   async create(record: DatasetRecord): Promise<void> {
     const db = await this.database(record.scopeKey)
     assertPhysicalTableName(record.tableName)
+    // 先把工作区登记进注册表，设置页才能枚举到它（目录库与业务库通常同一连接）。
+    await this.scopes.record(record.scopeKey)
     await db
       .prepare(
-        `INSERT INTO datasets (id, scope_key, name, table_name, source_path, row_count, columns, status, error, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO datasets (id, scope_key, name, table_name, source_path, description, row_count, columns, status, error, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         record.id,
@@ -221,6 +260,7 @@ export class DatasetStore {
         record.name,
         record.tableName,
         record.sourcePath,
+        record.description,
         record.rowCount,
         JSON.stringify(record.columns),
         record.status,
@@ -231,7 +271,7 @@ export class DatasetStore {
   }
 
   async update(scopeKey: string, id: string, patch: Partial<Pick<DatasetRecord,
-    'name' | 'rowCount' | 'columns' | 'status' | 'error' | 'sourcePath'>>): Promise<void> {
+    'name' | 'rowCount' | 'columns' | 'status' | 'error' | 'sourcePath' | 'description'>>): Promise<void> {
     const db = await this.database(scopeKey)
     const assignments: string[] = ['updated_at = ?']
     const params: unknown[] = [Date.now()]
@@ -258,6 +298,10 @@ export class DatasetStore {
     if (patch.sourcePath !== undefined) {
       assignments.push('source_path = ?')
       params.push(patch.sourcePath)
+    }
+    if (patch.description !== undefined) {
+      assignments.push('description = ?')
+      params.push(patch.description)
     }
     params.push(id, scopeKey)
     await db.prepare(`UPDATE datasets SET ${assignments.join(', ')} WHERE id = ? AND scope_key = ?`).run(...params)

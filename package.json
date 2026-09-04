@@ -27,7 +27,8 @@
     "typecheck:host": "tsc -p tsconfig.json --noEmit",
     "typecheck:client": "tsc -p tsconfig.client.json --noEmit",
     "import": "node examples/run-import.mjs",
-    "view": "node examples/run-view.mjs"
+    "view": "node examples/run-view.mjs",
+    "admin": "node examples/run-admin.mjs"
   },
   "dsh": {
     "bundle": {

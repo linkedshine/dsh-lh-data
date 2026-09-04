@@ -9,6 +9,7 @@
  */
 
 import { randomBytes } from 'node:crypto'
+import { debugLog } from './tooling'
 import { validateOrderBy } from './sql'
 
 /** 视图能看到的列（列名保持原始表头，含中文）。 */
@@ -149,14 +150,21 @@ export class ViewRegistry {
     this.evictIfNeeded()
     const viewId = makeViewId()
     const now = Date.now()
+    const total = Math.max(0, Math.floor(input.totalRows))
     const view: RegisteredView = {
       ...input,
-      totalRows: Math.max(0, Math.min(Math.floor(input.totalRows), input.rowCap, this.options.maxViewRows)),
+      totalRows: total,
       viewId,
       createdAt: now,
       expiresAt: now + Math.max(1, Math.floor(this.options.viewTtlMs)),
     }
     this.views.set(viewId, view)
+    debugLog('view:create', {
+      viewId,
+      totalRows: view.totalRows,
+      rowCap: input.rowCap,
+      maxViewRows: this.options.maxViewRows,
+    })
     return {
       kind: 'dataset-view',
       viewId,
@@ -209,8 +217,18 @@ export class ViewRegistry {
     const maxPageSize = Math.max(1, Math.floor(this.options.maxPageSize))
     const pageSize = Math.min(Math.max(1, clampInteger(request.pageSize, this.options.defaultPageSize)), maxPageSize)
     const totalRows = view.totalRows
-    const totalPages = Math.max(1, Math.ceil(totalRows / pageSize))
+    // 分页边界：命中数、模型声明的上限（rowCap）、全局硬上限三者取小。
+    const servable = Math.max(0, Math.min(totalRows, view.rowCap, this.options.maxViewRows))
+    const totalPages = Math.max(1, Math.ceil(servable / pageSize))
     const page = Math.min(Math.max(1, clampInteger(request.page, 1)), totalPages)
+    debugLog('view:page', {
+      viewId,
+      page,
+      pageSize,
+      totalRows,
+      servable,
+      totalPages,
+    })
 
     let sort: { column: string; order: SortOrder } | undefined
     if (typeof request.sort === 'string' && request.sort.length > 0) {

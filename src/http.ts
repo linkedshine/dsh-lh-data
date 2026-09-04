@@ -9,32 +9,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { ViewError, type ViewDescriptor } from './view'
 import { selectRows } from './table'
+import { debugLog } from './tooling'
 import type { DataServices } from './store'
-
-/** 路由需要的请求面（duck-typed：只用这几个字段）。 */
-interface RouteRequest {
-  method?: string
-  url?: string
-}
-
-interface RouteResponse {
-  writeHead(status: number, headers?: Record<string, string>): unknown
-  end(body?: string): unknown
-}
-
-const JSON_HEADERS: Record<string, string> = {
-  'content-type': 'application/json; charset=utf-8',
-  'cache-control': 'no-store',
-}
-
-function sendJson(response: RouteResponse, status: number, payload: unknown): void {
-  response.writeHead(status, JSON_HEADERS)
-  response.end(`${JSON.stringify(payload)}\n`)
-}
-
-function sendError(response: RouteResponse, status: number, code: string, message: string): void {
-  sendJson(response, status, { error: { code, message } })
-}
+import { authorize, queryInt, sendError, sendJson, type RouteRequest, type RouteResponse } from './http-common'
 
 /** `/views/<id>` 或 `/views/<id>/rows`。 */
 function parseViewPath(pathname: string, prefix: string): { viewId: string; rows: boolean } | undefined {
@@ -45,12 +22,6 @@ function parseViewPath(pathname: string, prefix: string): { viewId: string; rows
   if (tail === undefined) return { viewId, rows: false }
   if (tail === 'rows') return { viewId, rows: true }
   return undefined
-}
-
-function queryInt(raw: string | null): number | undefined {
-  if (raw === null || raw.trim().length === 0) return undefined
-  const n = Number(raw)
-  return Number.isFinite(n) ? Math.floor(n) : undefined
 }
 
 /**
@@ -66,7 +37,7 @@ export function registerViewRoutes(services: DataServices): (() => void) | undef
     const request = rawRequest as RouteRequest & IncomingMessage
     const response = rawResponse as RouteResponse & ServerResponse
 
-    const rejection = connection.requestRejection(request)
+    const rejection = authorize(connection, request)
     if (rejection !== undefined) {
       sendError(response, rejection, rejection === 401 ? 'UNAUTHORIZED' : 'FORBIDDEN', 'unauthorized')
       return
@@ -127,6 +98,14 @@ export function registerViewRoutes(services: DataServices): (() => void) | undef
       })
       const db = await services.store.database(view.scopeKey)
       const { rows, columns } = await selectRows(db, statement.sql, [...statement.params])
+      debugLog('http:rows', {
+        viewId: view.viewId,
+        page: statement.page,
+        pageSize: statement.pageSize,
+        totalRows: statement.totalRows,
+        totalPages: statement.totalPages,
+        rows: rows.length,
+      })
       sendJson(response, 200, {
         viewId: view.viewId,
         columns,

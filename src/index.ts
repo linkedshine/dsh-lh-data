@@ -20,6 +20,8 @@ import { createStore, type DataConfig, type DataServices } from './store'
 import { createToolDefinitions, WRITE_TOOLS } from './tools/registry'
 import { createViewRegistry, type ViewRegistry } from './view'
 import { registerViewRoutes } from './http'
+import { registerAdminRoutes } from './admin-http'
+import { ADMIN_API_BASE } from './admin-contract'
 import { PLUGIN_NAME, type PreToolDecision, type ToolDefinition, type ToolExec, type ToolRegistry } from './tooling'
 
 /** cordis 用于加载/去重的唯一标识。 */
@@ -92,6 +94,11 @@ export const Config: Schema<Config> = Schema.object({
   viewTtlMs: Schema.number().default(1800000).description('视图存活时间（毫秒，滑动刷新）'),
   maxViews: Schema.number().default(64).description('同时存活的视图数（LRU 淘汰）'),
   viewRoutePrefix: Schema.string().default('/api/lh-data').description('前端分页接口的路由前缀'),
+
+  // 设置页管理接口（新增）
+  adminEnabled: Schema.boolean().default(true).description('是否挂载设置页管理接口（关闭后路由不注册，前端显示不可用）'),
+  adminMaxBodyBytes: Schema.number().default(65536).description('管理接口请求体字节上限'),
+  adminMaxDatasets: Schema.number().default(500).description('聚合列表扫描的数据集上限，超限截断并提示'),
 })
 
 /** 注入系统提示词的使用引导（替代 v1 的 SKILL.md）。 */
@@ -126,7 +133,7 @@ export function validateConfig(cfg: Partial<DataConfig> = {}): Config {
     'maxFileBytes', 'maxInsertRows', 'maxQueryRows', 'batchSize', 'backgroundThresholdRows', 'previewSampleRows',
     'viewThresholdRows', 'viewThresholdBytes', 'previewRows', 'previewCellChars', 'previewColumns',
     'summaryMaxColumns', 'summaryMaxTextColumns', 'defaultPageSize', 'maxPageSize', 'maxViewRows',
-    'viewTtlMs', 'maxViews',
+    'viewTtlMs', 'maxViews', 'adminMaxBodyBytes', 'adminMaxDatasets',
   ] as const) {
     const value = merged[key]
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
@@ -279,6 +286,49 @@ function mountViewRoutes(
   })
 }
 
+/**
+ * 设置页管理接口路由挂载。与视图路由**相互独立**：
+ * - `adminEnabled=false` → 不注册，前端显示「接口不可用」；
+ * - `webServer` / `connection` 缺失 → 降级，不影响装载；
+ * - 注册抛错（如路径冲突）→ 记 warn 并降级，不拖垮视图路由。
+ */
+function mountAdminRoutes(
+  rt: PluginContext,
+  services: DataServices,
+  cfg: Config,
+  log: (message: string) => void,
+  warn: (message: string) => void,
+): void {
+  if (typeof rt.inject !== 'function') return
+  if (cfg.adminEnabled === false) {
+    log(`${PLUGIN_NAME}: 设置页管理接口已关闭（adminEnabled=false）`)
+    return
+  }
+  rt.inject(['webServer', 'connection'], (injected: unknown) => {
+    const host = injected as { webServer?: DataServices['webServer']; connection?: DataServices['connection'] } | null | undefined
+    const { webServer, connection } = host ?? {}
+    if (webServer === undefined || connection === undefined) {
+      log(`${PLUGIN_NAME}: 未检测到 webServer/connection，设置页管理接口降级`)
+      return
+    }
+    services.webServer = webServer
+    services.connection = connection
+
+    let dispose: (() => void) | undefined
+    try {
+      dispose = registerAdminRoutes(services)
+    } catch (error) {
+      warn(`${PLUGIN_NAME}: 设置页管理接口路由注册失败（${errorMessage(error)}）：已降级`)
+      return
+    }
+    if (dispose === undefined) return
+
+    const release = dispose
+    if (typeof rt.effect === 'function') rt.effect(() => () => release())
+    log(`${PLUGIN_NAME}: 设置页管理接口已挂载 ${ADMIN_API_BASE}`)
+  })
+}
+
 export function apply(ctx: Context, config: Config): void {
   const rt = ctx as unknown as PluginContext
   const cfg = config
@@ -314,6 +364,7 @@ export function apply(ctx: Context, config: Config): void {
       if (jobs !== undefined) services.jobs = jobs
     })
     mountViewRoutes(rt, services, views, cfg, log, warn)
+    mountAdminRoutes(rt, services, cfg, log, warn)
     rt.inject(['systemPrompt'], (injected: unknown) => {
       const systemPrompt = (injected as {
         systemPrompt?: { section?(section: PromptSection): () => void }
