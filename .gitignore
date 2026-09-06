@@ -3,3 +3,4 @@ lib/
 *.log
 data/
 .DS_Store
+.codebuddy
