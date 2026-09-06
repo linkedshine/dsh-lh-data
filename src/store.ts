@@ -47,8 +47,6 @@ export interface DataConfig {
   defaultPageSize: number
   maxPageSize: number
   maxViewRows: number
-  viewTtlMs: number
-  maxViews: number
   viewRoutePrefix: string
 
   // ── 设置页管理接口（新增） ──

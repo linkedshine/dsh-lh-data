@@ -66,7 +66,6 @@ export interface QueryViewInfo {
   stable: boolean
   /** 允许前端排序的列名白名单。 */
   sortable: string[]
-  expiresAt: number
 }
 
 export interface QueryOutput {
@@ -342,7 +341,6 @@ export function createQueryTool(services: DataServices): ToolDefinition {
           maxPageSize: value.view.maxPageSize,
           stable: value.view.stable,
           sortable: value.view.sortable,
-          expiresAt: value.view.expiresAt,
         }
         debugLog('read:meta', meta)
         return meta
@@ -477,7 +475,7 @@ export function createQueryTool(services: DataServices): ToolDefinition {
       let view: QueryViewInfo | undefined
       if (useView && services.views !== undefined) {
         const registered = new Set(record.columns.map(column => column.sanitizedName))
-        const descriptor = services.views.create({
+        const descriptor = await services.views.create({
           scopeKey: scope.scopeKey,
           datasetId: record.id,
           name: record.name,
@@ -505,7 +503,6 @@ export function createQueryTool(services: DataServices): ToolDefinition {
           maxPageSize: descriptor.maxPageSize,
           stable: descriptor.stable,
           sortable: descriptor.sortable,
-          expiresAt: descriptor.expiresAt,
         }
       }
 

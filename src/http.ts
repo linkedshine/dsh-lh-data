@@ -56,15 +56,16 @@ export function registerViewRoutes(services: DataServices): (() => void) | undef
     }
 
     if (method === 'DELETE') {
-      sendJson(response, 200, { viewId: parsed.viewId, revoked: views.revoke(parsed.viewId) })
+      const revoked = await views.revoke(parsed.viewId)
+      sendJson(response, 200, { viewId: parsed.viewId, revoked })
       return
     }
 
     try {
       const view = views.get(parsed.viewId)
       if (view === undefined) {
-        // 未注册与已过期对外统一 404，避免探测视图是否存在。
-        throw new ViewError('VIEW_NOT_FOUND', 404, '视图不存在或已过期（请重新查询）')
+        // 未注册对外统一 404，避免探测视图是否存在。
+        throw new ViewError('VIEW_NOT_FOUND', 404, '视图不存在或接口不可用（请重新查询）')
       }
       // 归属与就绪状态按视图绑定的 scope 重新断言（defense-in-depth）。
       await services.store.require(view.scopeKey, view.datasetId, { requireReady: true })
@@ -82,7 +83,6 @@ export function registerViewRoutes(services: DataServices): (() => void) | undef
           maxPageSize: services.cfg.maxPageSize,
           stable: view.stable,
           sortable: view.sortable,
-          expiresAt: view.expiresAt,
         }
         sendJson(response, 200, meta)
         return

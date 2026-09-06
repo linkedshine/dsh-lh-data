@@ -4,13 +4,20 @@
  * 视图是**主机侧的句柄**：`viewId` 之外的一切（物理表名、count/page 语句）都留在这里，
  * 既不出现在模型上下文里，也不出现在 HTTP 响应里。前端只能拿 `viewId` + 分页参数换页。
  *
- * 生命周期：滑动 TTL（`viewTtlMs`）到期即失效，容量上限（`maxViews`）按 LRU 淘汰，
- * 插件卸载时 `clear()`。失效是惰性的（访问时判定），不额外占用定时器。
+ * 生命周期：视图元数据持久化到数据库表（`lh_views`，与 `datasets` 同库同 scope），
+ * 进程重启 / 插件重载 / 热更新后仍能继续翻页查看，永不过期、不被容量淘汰。
+ * 翻页行数据始终实时查询原始数据表，因此底层数据可能被并发写入改变
+ * （前端卡片常驻软警告「数据可能已发生变化」）。
+ *
+ * 内部仍保留 `Map` 作为热缓存，`get()` / `page()` / `revoke()` 同步操作缓存（翻页 O(1)），
+ * 仅 `create` / `revoke` 会写库，启动时 `loadAll()` 从各库预载一次。
  */
 
 import { randomBytes } from 'node:crypto'
 import { debugLog } from './tooling'
 import { validateOrderBy } from './sql'
+import type { Database, Row } from './db'
+import type { ScopeRegistry } from './scope-registry'
 
 /** 视图能看到的列（列名保持原始表头，含中文）。 */
 export interface ViewColumn {
@@ -48,7 +55,6 @@ export interface CreateViewInput extends ViewSqlParts {
 export interface RegisteredView extends CreateViewInput {
   viewId: string
   createdAt: number
-  expiresAt: number
 }
 
 /** 交给前端的描述符（`output.presentationMeta` 的载荷）。 */
@@ -64,7 +70,6 @@ export interface ViewDescriptor {
   maxPageSize: number
   stable: boolean
   sortable: string[]
-  expiresAt: number
 }
 
 export interface ViewOptions {
@@ -74,8 +79,14 @@ export interface ViewOptions {
   maxPageSize: number
   /** 视图可服务行数的硬上限。 */
   maxViewRows: number
-  viewTtlMs: number
-  maxViews: number
+}
+
+/** 持久化所需的外部依赖（以回调注入，避免与 store 形成值循环依赖）。 */
+export interface ViewDeps {
+  /** 已登记工作区枚举（`loadAll` 遍历用）。 */
+  scopes: ScopeRegistry
+  /** 按 scope 取得对应业务库连接。 */
+  database: (scopeKey: string) => Promise<Database>
 }
 
 export type SortOrder = 'asc' | 'desc'
@@ -100,7 +111,7 @@ export interface PageStatement {
 
 export class ViewError extends Error {
   constructor(
-    readonly code: 'VIEW_NOT_FOUND' | 'VIEW_EXPIRED' | 'BAD_REQUEST',
+    readonly code: 'VIEW_NOT_FOUND' | 'BAD_REQUEST',
     readonly status: 400 | 404,
     message: string,
   ) {
@@ -110,6 +121,28 @@ export class ViewError extends Error {
 }
 
 const VIEW_ID_BYTES = 12
+
+/** 持久化视图表的建表语句（与 datasets 同库，per-scope）。 */
+const LH_VIEWS_SCHEMA = `
+CREATE TABLE IF NOT EXISTS lh_views (
+  view_id    TEXT PRIMARY KEY,
+  scope_key  TEXT NOT NULL,
+  dataset_id TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  table_name TEXT NOT NULL,
+  base_sql   TEXT NOT NULL,
+  base_order TEXT,
+  tie        TEXT,
+  count_sql  TEXT NOT NULL,
+  columns    TEXT NOT NULL,
+  total_rows INTEGER NOT NULL,
+  row_cap    INTEGER NOT NULL,
+  sortable   TEXT NOT NULL,
+  stable     INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lh_views_scope ON lh_views(scope_key);
+`
 
 function makeViewId(): string {
   return `vw_${randomBytes(VIEW_ID_BYTES).toString('hex')}`
@@ -133,11 +166,13 @@ export function composeOrderBy(parts: ViewSqlParts, sort?: { column: string; ord
 export class ViewRegistry {
   private readonly views = new Map<string, RegisteredView>()
   private readonly options: ViewOptions
+  private readonly deps: ViewDeps
 
   // 注意：本仓库的构建链（tsdown/rolldown）在「类含 getter + 构造函数参数属性」的
   // 组合下会丢掉参数属性的赋值，因此这里显式声明字段并在构造函数里赋值。
-  constructor(options: ViewOptions) {
+  constructor(options: ViewOptions, deps: ViewDeps) {
     this.options = options
+    this.deps = deps
   }
 
   /** 当前存活视图数（测试与日志用）。 */
@@ -145,9 +180,50 @@ export class ViewRegistry {
     return this.views.size
   }
 
-  /** 注册一个视图并返回给前端的描述符。 */
-  create(input: CreateViewInput): ViewDescriptor {
-    this.evictIfNeeded()
+  /** 确保某 scope 的业务库已存在视图表（幂等），返回库连接。 */
+  private async ensureTable(scopeKey: string): Promise<Database> {
+    const db = await this.deps.database(scopeKey)
+    await db.exec(LH_VIEWS_SCHEMA)
+    return db
+  }
+
+  /** 把一行 DB 记录还原成内部视图对象。 */
+  private static fromRow(row: Row): RegisteredView {
+    let columns: ViewColumn[] = []
+    try {
+      const parsed: unknown = JSON.parse(String(row.columns ?? '[]'))
+      if (Array.isArray(parsed)) columns = parsed as ViewColumn[]
+    } catch {
+      columns = []
+    }
+    let sortable: string[] = []
+    try {
+      const parsed: unknown = JSON.parse(String(row.sortable ?? '[]'))
+      if (Array.isArray(parsed)) sortable = parsed as string[]
+    } catch {
+      sortable = []
+    }
+    return {
+      viewId: String(row.view_id),
+      scopeKey: String(row.scope_key),
+      datasetId: String(row.dataset_id),
+      name: String(row.name),
+      tableName: String(row.table_name),
+      baseSql: String(row.base_sql),
+      baseOrder: row.base_order === null || row.base_order === undefined ? undefined : String(row.base_order),
+      tie: row.tie === null || row.tie === undefined ? undefined : String(row.tie),
+      countSql: String(row.count_sql),
+      columns,
+      totalRows: Number(row.total_rows ?? 0),
+      rowCap: Number(row.row_cap ?? 0),
+      sortable,
+      stable: Number(row.stable ?? 0) === 1,
+      createdAt: Number(row.created_at ?? 0),
+    }
+  }
+
+  /** 注册一个视图：双写内存缓存与数据库表，返回给前端的描述符。 */
+  async create(input: CreateViewInput): Promise<ViewDescriptor> {
     const viewId = makeViewId()
     const now = Date.now()
     const total = Math.max(0, Math.floor(input.totalRows))
@@ -156,11 +232,35 @@ export class ViewRegistry {
       totalRows: total,
       viewId,
       createdAt: now,
-      expiresAt: now + Math.max(1, Math.floor(this.options.viewTtlMs)),
     }
+    // 先写内存，保证创建后立即可读（如本会话内翻页）。
     this.views.set(viewId, view)
+
+    const db = await this.ensureTable(input.scopeKey)
+    await db.prepare(
+      `INSERT INTO lh_views
+        (view_id, scope_key, dataset_id, name, table_name, base_sql, base_order, tie, count_sql, columns, total_rows, row_cap, sortable, stable, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      view.viewId,
+      view.scopeKey,
+      view.datasetId,
+      view.name,
+      view.tableName,
+      view.baseSql,
+      view.baseOrder ?? null,
+      view.tie ?? null,
+      view.countSql,
+      JSON.stringify(view.columns),
+      view.totalRows,
+      view.rowCap,
+      JSON.stringify(view.sortable),
+      view.stable ? 1 : 0,
+      view.createdAt,
+    )
     debugLog('view:create', {
       viewId,
+      scopeKey: view.scopeKey,
       totalRows: view.totalRows,
       rowCap: input.rowCap,
       maxViewRows: this.options.maxViewRows,
@@ -177,32 +277,44 @@ export class ViewRegistry {
       maxPageSize: this.options.maxPageSize,
       stable: view.stable,
       sortable: view.sortable,
-      expiresAt: view.expiresAt,
     }
   }
 
-  /** 取一个未过期的视图；命中会刷新 TTL 与 LRU 位置。 */
+  /** 取一个已注册的视图（同步读内存缓存；启动已 loadAll 预载）。 */
   get(viewId: string): RegisteredView | undefined {
+    return this.views.get(viewId)
+  }
+
+  /** 主动释放（前端卸载卡片 / DELETE）。双删：内存缓存 + 数据库行。 */
+  async revoke(viewId: string): Promise<boolean> {
     const view = this.views.get(viewId)
-    if (view === undefined) return undefined
-    if (view.expiresAt <= Date.now()) {
-      this.views.delete(viewId)
-      return undefined
-    }
-    // Map 保序：先删再插 = 移到最新。
+    if (view === undefined) return false
     this.views.delete(viewId)
-    view.expiresAt = Date.now() + Math.max(1, Math.floor(this.options.viewTtlMs))
-    this.views.set(viewId, view)
-    return view
+    const db = await this.ensureTable(view.scopeKey)
+    await db.prepare('DELETE FROM lh_views WHERE view_id = ?').run(viewId)
+    return true
   }
 
-  /** 主动释放（前端卸载卡片）。 */
-  revoke(viewId: string): boolean {
-    return this.views.delete(viewId)
-  }
-
+  /** 仅清空内存热缓存（不删库表，否则持久化失效）。 */
   clear(): void {
     this.views.clear()
+  }
+
+  /**
+   * 启动时预载：遍历所有已登记 scope，把各库 `lh_views` 表读进内存。
+   * 必须在注册路由前完成，避免早期请求漏命中。
+   */
+  async loadAll(): Promise<void> {
+    const entries = await this.deps.scopes.list()
+    for (const entry of entries) {
+      const db = await this.ensureTable(entry.scopeKey)
+      const rows = await db.prepare('SELECT * FROM lh_views WHERE scope_key = ?').all(entry.scopeKey)
+      for (const row of rows) {
+        const view = ViewRegistry.fromRow(row)
+        this.views.set(view.viewId, view)
+      }
+    }
+    debugLog('view:loadAll', { scopes: entries.length, views: this.views.size })
   }
 
   /**
@@ -212,7 +324,7 @@ export class ViewRegistry {
   page(viewId: string, request: PageRequest = {}): PageStatement {
     const view = this.get(viewId)
     if (view === undefined) {
-      throw new ViewError('VIEW_NOT_FOUND', 404, '视图不存在或已过期（请重新查询）')
+      throw new ViewError('VIEW_NOT_FOUND', 404, '视图不存在或接口不可用（请重新查询）')
     }
     const maxPageSize = Math.max(1, Math.floor(this.options.maxPageSize))
     const pageSize = Math.min(Math.max(1, clampInteger(request.pageSize, this.options.defaultPageSize)), maxPageSize)
@@ -251,19 +363,9 @@ export class ViewRegistry {
       stable: view.stable,
     }
   }
-
-  /** 容量上限时淘汰最久未使用的视图。 */
-  private evictIfNeeded(): void {
-    const max = Math.max(1, Math.floor(this.options.maxViews))
-    while (this.views.size >= max) {
-      const oldest = this.views.keys().next()
-      if (oldest.done === true) return
-      this.views.delete(oldest.value)
-    }
-  }
 }
 
 /** 视图注册中心的构造入口（`DataServices.views`）。 */
-export function createViewRegistry(options: ViewOptions): ViewRegistry {
-  return new ViewRegistry(options)
+export function createViewRegistry(options: ViewOptions, deps: ViewDeps): ViewRegistry {
+  return new ViewRegistry(options, deps)
 }

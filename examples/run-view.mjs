@@ -1,6 +1,6 @@
 /**
  * 结果视图验证脚本（设计文档 §12）：构造带假 `webServer` / `connection` 的最小 ctx，
- * 跑通「大结果集 → 模型只拿片段 → 前端按 viewId 分页取完全量 → 鉴权/过期/降级」。
+ * 跑通「大结果集 → 模型只拿片段 → 前端按 viewId 分页取完全量 → 鉴权/持久化恢复/降级」。
  *
  * 运行：先 `pnpm run build`，再 `node examples/run-view.mjs`
  */
@@ -239,19 +239,30 @@ const released = await request(ctx, `/api/lh-data/views/${viewId}`, { method: 'D
 check('DELETE 释放视图', released.status === 200 && released.body.revoked === true, JSON.stringify(released))
 check('释放后再取 → 404', (await request(ctx, `/api/lh-data/views/${viewId}/rows`)).status === 404)
 
-// ── 阶段 5：TTL 过期 ──────────────────────────────────────────────────────
+// ── 阶段 5：持久化（重启后可恢复，永不过期、不被容量淘汰） ───────────────────
 
-section('TTL 过期')
-const ttlCtx = makeCtx()
-apply(ttlCtx, validateConfig({ dbPath: join(workspace, 'ttl.db'), requireApprovalForWrites: false, viewTtlMs: 50 }))
-const ttlImported = await call(ttlCtx, 'dataset_import', { path: 'big.csv', name: 'ttl' })
-const ttlQuery = await call(ttlCtx, 'dataset_query', { dataset: ttlImported.value.datasetId })
-check('TTL 场景下仍生成视图', typeof ttlQuery.value.view?.viewId === 'string')
+section('持久化：重启后可恢复')
+const persistCtx = makeCtx()
+apply(persistCtx, validateConfig({ dbPath: join(workspace, 'persist.db'), requireApprovalForWrites: false }))
+const persistImported = await call(persistCtx, 'dataset_import', { path: 'big.csv', name: 'persist' })
+const persistQuery = await call(persistCtx, 'dataset_query', { dataset: persistImported.value.datasetId })
+const persistViewId = persistQuery.value.view?.viewId
+check('生成视图', typeof persistViewId === 'string')
+const persistRows = await request(persistCtx, `/api/lh-data/views/${persistViewId}/rows`)
+check('首次可取数 → 200', persistRows.status === 200, JSON.stringify(persistRows))
+
+// 模拟进程重启：丢弃旧 ctx（内存视图缓存随之消失），用同一 dbPath 重新装载插件。
+for (const dispose of persistCtx.disposers) dispose()
+await sleep(50)
+
+const rebootCtx = makeCtx()
+apply(rebootCtx, validateConfig({ dbPath: join(workspace, 'persist.db'), requireApprovalForWrites: false }))
+// loadAll 在 apply 内异步预载并注册路由，等待其完成后再请求。
 await sleep(120)
-const expired = await request(ttlCtx, `/api/lh-data/views/${ttlQuery.value.view.viewId}/rows`)
-check('过期后 → 404', expired.status === 404, JSON.stringify(expired))
-for (const dispose of ttlCtx.disposers) dispose()
-closeAllDatabases()
+const rebootRows = await request(rebootCtx, `/api/lh-data/views/${persistViewId}/rows`)
+check('重启后视图仍可恢复取数 → 200', rebootRows.status === 200, JSON.stringify(rebootRows))
+check('重启后总行数一致', rebootRows.body?.totalRows === ROW_COUNT, `期望 ${ROW_COUNT}，实际 ${rebootRows.body?.totalRows}`)
+for (const dispose of rebootCtx.disposers) dispose()
 
 // ── 阶段 6：无 webServer 时降级 ───────────────────────────────────────────
 

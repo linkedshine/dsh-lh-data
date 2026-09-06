@@ -91,8 +91,6 @@ export const Config: Schema<Config> = Schema.object({
   defaultPageSize: Schema.number().default(100).description('前端视图首页行数'),
   maxPageSize: Schema.number().default(500).description('前端视图单页行数上限'),
   maxViewRows: Schema.number().default(50000).description('单个视图可翻到的最大行数'),
-  viewTtlMs: Schema.number().default(1800000).description('视图存活时间（毫秒，滑动刷新）'),
-  maxViews: Schema.number().default(64).description('同时存活的视图数（LRU 淘汰）'),
   viewRoutePrefix: Schema.string().default('/api/lh-data').description('前端分页接口的路由前缀'),
 
   // 设置页管理接口（新增）
@@ -133,7 +131,7 @@ export function validateConfig(cfg: Partial<DataConfig> = {}): Config {
     'maxFileBytes', 'maxInsertRows', 'maxQueryRows', 'batchSize', 'backgroundThresholdRows', 'previewSampleRows',
     'viewThresholdRows', 'viewThresholdBytes', 'previewRows', 'previewCellChars', 'previewColumns',
     'summaryMaxColumns', 'summaryMaxTextColumns', 'defaultPageSize', 'maxPageSize', 'maxViewRows',
-    'viewTtlMs', 'maxViews', 'adminMaxBodyBytes', 'adminMaxDatasets',
+    'adminMaxBodyBytes', 'adminMaxDatasets',
   ] as const) {
     const value = merged[key]
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
@@ -283,6 +281,12 @@ function mountViewRoutes(
       })
     }
     log(`${PLUGIN_NAME}: 结果视图路由已挂载 ${cfg.viewRoutePrefix}/views（viewMode=${cfg.viewMode}）`)
+
+    // 路由就绪后后台预载持久化视图（从各 scope 库读 lh_views），不阻塞路由挂载；
+    // 预载完成前若有极早期请求会因内存缓存为空而 404，但本地库预载通常远早于首个请求。
+    void views.loadAll().catch((error: unknown) => {
+      warn(`${PLUGIN_NAME}: 结果视图预载失败（${errorMessage(error)}）：新视图仍可创建，重启前的历史视图需下次预载`)
+    })
   })
 }
 
@@ -352,8 +356,9 @@ export function apply(ctx: Context, config: Config): void {
     defaultPageSize: cfg.defaultPageSize,
     maxPageSize: cfg.maxPageSize,
     maxViewRows: cfg.maxViewRows,
-    viewTtlMs: cfg.viewTtlMs,
-    maxViews: cfg.maxViews,
+  }, {
+    scopes: services.store.scopes,
+    database: (scopeKey: string) => services.store.database(scopeKey),
   })
 
   // 可选依赖：jobs（后台导入）、systemPrompt（使用引导）、webServer + connection（前端分页）。

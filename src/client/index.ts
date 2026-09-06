@@ -53,7 +53,6 @@ interface DatasetViewMeta {
   maxPageSize: number
   stable: boolean
   sortable: string[]
-  expiresAt: number
 }
 
 interface PagePayload {
@@ -92,6 +91,7 @@ const styles = {
   button: { border: '1px solid var(--dsw-border, #ddd)', background: 'transparent', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontSize: 12 },
   muted: { opacity: 0.7 },
   error: { color: 'var(--dsw-danger, #c0392b)' },
+  warn: { background: '#FEF3C7', color: '#92400E', padding: '6px 10px', borderRadius: 6, fontSize: 12, marginBottom: 6 },
 } as const
 
 function formatCell(value: unknown): string {
@@ -210,12 +210,14 @@ function DatasetViewCard(props: ToolCallViewProps): React.ReactElement | null {
         if (!response.ok) {
           const body = await response.json().catch(() => null) as { error?: { code?: string } } | null
           if (id === requestId.current) {
-            setState({
+            // 出错时保留上一页 payload，表格不清空，仅顶部显示软提示。
+            setState(previous => ({
               status: 'error',
+              payload: previous.payload,
               message: body?.error?.code === 'VIEW_NOT_FOUND' || response.status === 404
-                ? '结果已过期，请重新查询'
+                ? '数据接口不可用（请检查视图路由前缀配置或插件是否已启用视图）'
                 : `取数失败（HTTP ${response.status}）`,
-            })
+            }))
           }
           return
         }
@@ -280,7 +282,7 @@ function DatasetViewCard(props: ToolCallViewProps): React.ReactElement | null {
             const body = await response.json().catch(() => null) as { error?: { code?: string } } | null
             if (controller.signal.aborted) return
             throw new Error(body?.error?.code === 'VIEW_NOT_FOUND' || response.status === 404
-              ? '结果已过期，请重新查询'
+              ? '数据接口不可用（请检查视图路由前缀配置或插件是否已启用视图）'
               : `导出失败（HTTP ${response.status}）`)
           }
           const current = await response.json() as PagePayload
@@ -343,6 +345,7 @@ function DatasetViewCard(props: ToolCallViewProps): React.ReactElement | null {
     ...columns.map(column => React.createElement('td', { key: column, style: styles.td, title: formatCell(row[column]) }, formatCell(row[column])))))
 
   return React.createElement('div', { style: styles.wrap },
+    React.createElement('div', { style: styles.warn }, '数据可能已发生变化，以最新查询结果为准'),
     React.createElement('div', { style: styles.head },
       React.createElement('span', { style: styles.title }, `数据集 ${meta.name}`),
       React.createElement('span', null, `共 ${meta.totalRows} 行 · ${meta.columns.length} 列`),
