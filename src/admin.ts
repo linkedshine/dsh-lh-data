@@ -15,19 +15,23 @@
 import type { DataServices } from './store'
 import { assertPhysicalTableName, generateTableName, makeDatasetId, type DatasetRecord } from './store'
 import { shortHash } from './db'
-import { createDatasetTable, dropDatasetTable } from './table'
+import { countRows, createDatasetTable, dropDatasetTable } from './table'
+import { quoteIdentifier } from './sql'
 import {
+  ADMIN_ROW_ID_COLUMN,
   type AdminErrorCode,
   type AdminWarning,
   type CreateDatasetRequest,
   type DatasetAdminView,
   type DatasetDetailView,
+  type DatasetRowsResult,
   type ListDatasetsResult,
   type PatchDatasetRequest,
   type ScopeView,
 } from './admin-contract'
 import {
   type ParsedListQuery,
+  type ParsedRowsQuery,
   validateColumnPatches,
   validateColumnSpecs,
   validateDatasetName,
@@ -35,6 +39,7 @@ import {
   validateScopeKey,
   validateSourcePath,
   parseListQuery,
+  parseRowsQuery,
 } from './admin-validate'
 
 /** 业务错误：携带 HTTP 状态码与脱敏后的错误信息。 */
@@ -162,6 +167,54 @@ export async function getDataset(
   const record = await services.store.find(scopeKey, id)
   if (record === undefined) throw new AdminServiceError('NOT_FOUND', 404, `未找到数据集：${id}`)
   return recordToDetail(record)
+}
+
+/**
+ * 只读分页读取某个数据集的物理表行。
+ *
+ * 只按 `_row_id` 升序翻页（稳定、不重不漏），列名取自元数据登记的业务列，
+ * 系统列（`_row_id` / `_uploaded_at`）不进 `columns`，但 `_row_id` 会出现在
+ * 每行里，供前端做稳定行键。页码由 `COUNT(*)` 反推后夹紧，越界返回末页。
+ */
+export async function listDatasetRows(
+  services: DataServices,
+  scopeKey: string,
+  id: string,
+  rawQuery: Record<string, string | undefined>,
+): Promise<DatasetRowsResult> {
+  if (!(await services.store.scopes.has(scopeKey))) {
+    throw new AdminServiceError('SCOPE_UNKNOWN', 404, `未知工作区：${scopeKey}`)
+  }
+  const record = await services.store.find(scopeKey, id)
+  if (record === undefined) throw new AdminServiceError('NOT_FOUND', 404, `未找到数据集：${id}`)
+  assertPhysicalTableName(record.tableName)
+
+  const query: ParsedRowsQuery = parseRowsQuery(rawQuery)
+  const db = await services.store.database(scopeKey)
+  const total = await countRows(db, record.tableName)
+  const totalPages = Math.max(1, Math.ceil(total / query.pageSize))
+  const page = Math.min(query.page, totalPages)
+  const offset = (page - 1) * query.pageSize
+
+  const names = record.columns.map(column => column.sanitizedName)
+  const projection = names.length === 0
+    ? quoteIdentifier(ADMIN_ROW_ID_COLUMN)
+    : [ADMIN_ROW_ID_COLUMN, ...names].map(quoteIdentifier).join(', ')
+  const rows = await db
+    .prepare(
+      `SELECT ${projection} FROM ${quoteIdentifier(record.tableName)}`
+      + ` ORDER BY ${quoteIdentifier(ADMIN_ROW_ID_COLUMN)} ASC LIMIT ? OFFSET ?`,
+    )
+    .all(query.pageSize, offset)
+
+  return {
+    columns: names,
+    rows: rows.map(row => ({ ...row })),
+    page,
+    pageSize: query.pageSize,
+    total,
+    totalPages,
+  }
 }
 
 /** 新建一张空物理表并登记元数据；列结构在提交时冻结。 */

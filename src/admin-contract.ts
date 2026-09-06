@@ -37,6 +37,15 @@ export const ADMIN_SECTION_LABEL = '数据集'
 export const ADMIN_PAGE_SIZE = 20
 export const ADMIN_MAX_PAGE_SIZE = 100
 
+// ── 表数据分页（查看某个数据集的行） ───────────────────────────────────────
+
+/** 表数据默认每页行数。 */
+export const ADMIN_ROW_PAGE_SIZE = 20
+/** 表数据每页行数的上限。 */
+export const ADMIN_ROW_MAX_PAGE_SIZE = 100
+/** 行号列：物理表的自增主键，只用于稳定排序与前端行键，不算业务列。 */
+export const ADMIN_ROW_ID_COLUMN = '_row_id'
+
 // ── 录入上限（前端 maxLength 与后端校验共用） ─────────────────────────────
 
 export const ADMIN_MAX_NAME_LENGTH = 80
@@ -105,6 +114,20 @@ export interface DatasetAdminView {
 /** 详情 = 列表项 + 只读列结构。 */
 export interface DatasetDetailView extends DatasetAdminView {
   columns: DatasetColumnView[]
+}
+
+/**
+ * 一页表数据（只读）。`columns` 只含业务列，`rows` 每行额外带 `_row_id`
+ * （`ADMIN_ROW_ID_COLUMN`）作为稳定行键；`page` 由服务端夹到分页边界内。
+ */
+export interface DatasetRowsResult {
+  columns: string[]
+  rows: Record<string, unknown>[]
+  page: number
+  pageSize: number
+  /** `COUNT(*)` 得到的真实行数（元数据里的 rowCount 可能与之不符）。 */
+  total: number
+  totalPages: number
 }
 
 /** 设置页可见的一个工作区。 */

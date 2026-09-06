@@ -1,6 +1,7 @@
 /**
  * 设置页管理接口验证脚本：构造带假 `webServer` / `connection` 的最小 ctx，
- * 跑通「聚合列表 / 新建空表 / 改名改描述改来源 / 删除」与门禁（鉴权、只读、未知工作区、重名）。
+ * 跑通「聚合列表 / 新建空表 / 改名改描述改来源 / 删除 / 分页查看表数据」
+ * 与门禁（鉴权、只读、未知工作区、重名）。
  *
  * 运行：先 `pnpm run build`，再 `node examples/run-admin.mjs`
  */
@@ -187,6 +188,37 @@ const detail = await request(ctx, `/api/lh-data/admin/datasets/${found.id}?scope
 check('GET /datasets/:id?scope= → 200', detail.status === 200, JSON.stringify(detail.body))
 check('详情含物理无关的列结构（3 列）', detail.body.columns.length === 3, JSON.stringify(detail.body.columns))
 
+// ── 阶段 2.5：分页查看表数据 ─────────────────────────────────────────────────
+
+section('分页查看表数据')
+const rowsUrl = id => `/api/lh-data/admin/datasets/${id}/rows?scope=${encodeURIComponent(scopeKey)}`
+
+const page1 = await request(ctx, `${rowsUrl(found.id)}&page=1&pageSize=2`)
+check('GET /datasets/:id/rows → 200', page1.status === 200, JSON.stringify(page1.body))
+check('首页返回 2 行（pageSize=2）', page1.body.rows.length === 2, JSON.stringify(page1.body.rows))
+check('总行数与总页数正确', page1.body.total === 3 && page1.body.totalPages === 2, JSON.stringify(page1.body))
+check('只回业务列（3 列，不含 _row_id）', page1.body.columns.length === 3 && !page1.body.columns.includes('_row_id'), JSON.stringify(page1.body.columns))
+check('每行带 _row_id 行键', page1.body.rows.every(row => typeof row._row_id === 'number'), JSON.stringify(page1.body.rows))
+check('行值按 _row_id 升序', JSON.stringify(page1.body.rows.map(row => row.产品)) === JSON.stringify(['手机', '笔记本']), JSON.stringify(page1.body.rows))
+
+const page2 = await request(ctx, `${rowsUrl(found.id)}&page=2&pageSize=2`)
+check('第二页返回剩余 1 行', page2.body.rows.length === 1 && page2.body.rows[0].产品 === '平板', JSON.stringify(page2.body.rows))
+
+const overflow = await request(ctx, `${rowsUrl(found.id)}&page=99&pageSize=2`)
+check('越界页码夹到末页', overflow.body.page === 2 && overflow.body.rows.length === 1, JSON.stringify(overflow.body))
+
+const clampedSize = await request(ctx, `${rowsUrl(found.id)}&page=1&pageSize=9999`)
+check('pageSize 夹到上限（3 行全取）', clampedSize.body.rows.length === 3 && clampedSize.body.pageSize <= 100, JSON.stringify(clampedSize.body.pageSize))
+
+const rowsPost = await request(ctx, rowsUrl(found.id), { method: 'POST', body: {} })
+check('表数据只接受 GET → 405', rowsPost.status === 405, JSON.stringify(rowsPost.body))
+const rowsSubPath = await request(ctx, `/api/lh-data/admin/datasets/${found.id}/other?scope=${encodeURIComponent(scopeKey)}`)
+check('未登记的子路径 → 404', rowsSubPath.status === 404, JSON.stringify(rowsSubPath.body))
+const rowsNoScope = await request(ctx, `/api/lh-data/admin/datasets/${found.id}/rows`)
+check('缺 scope → 400', rowsNoScope.status === 400, JSON.stringify(rowsNoScope.body))
+const rowsBadId = await request(ctx, rowsUrl('ds_not_exist'))
+check('未知数据集 → 404', rowsBadId.status === 404, JSON.stringify(rowsBadId.body))
+
 // ── 阶段 3：新建空数据集 ─────────────────────────────────────────────────────
 
 section('新建空数据集')
@@ -205,6 +237,9 @@ check('POST /datasets → 201', created.status === 201, JSON.stringify(created.b
 check('新表列结构已冻结（2 列）', created.body.columns.length === 2, JSON.stringify(created.body.columns))
 check('描述已落盘', created.body.description === '由设置页创建的空表', JSON.stringify(created.body.description))
 const newId = created.body.id
+
+const emptyRows = await request(ctx, `/api/lh-data/admin/datasets/${newId}/rows?scope=${encodeURIComponent(scopeKey)}`)
+check('空表分页 → total=0 且无行', emptyRows.status === 200 && emptyRows.body.total === 0 && emptyRows.body.rows.length === 0, JSON.stringify(emptyRows.body))
 
 const afterCreate = await request(ctx, '/api/lh-data/admin/datasets')
 check('列表新增后数量 +1', afterCreate.body.items.length === listed.body.items.length + 1, `${listed.body.items.length} → ${afterCreate.body.items.length}`)

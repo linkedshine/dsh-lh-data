@@ -11,6 +11,7 @@ import {
   type CreateDatasetRequest,
   type DatasetAdminView,
   type DatasetDetailView,
+  type DatasetRowsResult,
   type ListDatasetsResult,
   type PatchDatasetRequest,
   type ScopeView,
@@ -65,6 +66,20 @@ export function listDatasets(query: string, page: number, pageSize: number): Pro
 
 export function getDataset(id: string, scope: string): Promise<DatasetDetailView> {
   return request(`/datasets/${encodeURIComponent(id)}?scope=${encodeURIComponent(scope)}`)
+}
+
+/** 分页读取数据集的物理表数据（只读）。 */
+export function listDatasetRows(
+  id: string,
+  scope: string,
+  page: number,
+  pageSize: number,
+): Promise<DatasetRowsResult> {
+  const params = new URLSearchParams()
+  params.set('scope', scope)
+  params.set('page', String(page))
+  params.set('pageSize', String(pageSize))
+  return request(`/datasets/${encodeURIComponent(id)}/rows?${params.toString()}`)
 }
 
 export function createDataset(body: CreateDatasetRequest): Promise<DatasetDetailView> {

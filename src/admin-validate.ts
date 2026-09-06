@@ -18,6 +18,8 @@ import {
   ADMIN_MAX_SAMPLE_VALUES,
   ADMIN_MAX_SOURCE_LENGTH,
   ADMIN_PAGE_SIZE,
+  ADMIN_ROW_MAX_PAGE_SIZE,
+  ADMIN_ROW_PAGE_SIZE,
   type AdminColumnType,
   type AdminErrorCode,
 } from './admin-contract'
@@ -169,4 +171,19 @@ export function parseListQuery(params: Record<string, string | undefined>): Pars
   const page = clampInt(params.page, 1, 1, 100000)
   const pageSize = clampInt(params.pageSize, ADMIN_PAGE_SIZE, 1, ADMIN_MAX_PAGE_SIZE)
   return { q, page, pageSize }
+}
+
+export interface ParsedRowsQuery {
+  page: number
+  pageSize: number
+}
+
+/**
+ * 解析并夹紧表数据分页参数。页码上限只是防御（真实边界由 `COUNT(*)` 决定），
+ * 页大小封顶避免一次捞走整表。
+ */
+export function parseRowsQuery(params: Record<string, string | undefined>): ParsedRowsQuery {
+  const page = clampInt(params.page, 1, 1, 100000)
+  const pageSize = clampInt(params.pageSize, ADMIN_ROW_PAGE_SIZE, 1, ADMIN_ROW_MAX_PAGE_SIZE)
+  return { page, pageSize }
 }

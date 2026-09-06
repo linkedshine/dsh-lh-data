@@ -71,6 +71,10 @@ export const s = {
     width: '100%', boxSizing: 'border-box', padding: '5px 8px', fontSize: 12,
     border: `1px solid ${c.border}`, borderRadius: 6, background: c.bg, color: c.fg, outline: 'none',
   },
+  select: {
+    padding: '4px 6px', fontSize: 12, border: `1px solid ${c.border}`, borderRadius: 6,
+    background: c.bg, color: c.fg, outline: 'none',
+  },
   textarea: {
     width: '100%', boxSizing: 'border-box', padding: '5px 8px', fontSize: 12,
     border: `1px solid ${c.border}`, borderRadius: 6, background: c.bg, color: c.fg,

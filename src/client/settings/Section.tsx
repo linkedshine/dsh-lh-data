@@ -1,9 +1,11 @@
 /**
  * 设置页「数据集」根组件：顶部工具条（搜索 / 新建 / 刷新）+ 聚合列表表格 +
- * 详情/编辑或新建面板。所有数据来自 `api.ts`，跨工作区聚合由主机侧完成。
+ * 详情/编辑或新建面板 + 表数据分页面板。所有数据来自 `api.ts`，
+ * 跨工作区聚合与表数据读取由主机侧完成。
  *
- * 状态以「列表 / 详情 / 新建」分区呈现：表格常驻，选中行在下方展开详情，
- * 「新建」时详情区替换为新建表单。写操作的只读/关闭判定由错误码驱动。
+ * 状态以「列表 / 详情 / 新建」分区呈现：表格常驻，选中行在下方展开详情与
+ * 只读的表数据分页，「新建」时详情区替换为新建表单（此时没有表数据可看）。
+ * 写操作的只读/关闭判定由错误码驱动。
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -17,6 +19,7 @@ import {
 import { AdminApiError, getDataset, listDatasets, listScopes } from './api'
 import { DatasetTable } from './DatasetTable'
 import { DatasetEditor } from './DatasetEditor'
+import { RowsPanel } from './RowsPanel'
 import { CreateForm } from './CreateForm'
 import { c, s } from './styles'
 
@@ -177,13 +180,23 @@ export function DatasetSettingsSection(): ReactElement {
           )
         : detail !== null
           ? (
-            <DatasetEditor
-              detail={detail}
-              writable={writable}
-              onChanged={handleChanged}
-              onDeleted={id => void handleDeleted(id)}
-              onError={handleWriteError}
-            />
+            <>
+              <DatasetEditor
+                detail={detail}
+                writable={writable}
+                onChanged={handleChanged}
+                onDeleted={id => void handleDeleted(id)}
+                onError={handleWriteError}
+              />
+              {/* key 让切换数据集时重置分页状态，避免残留上一张表的页码。 */}
+              <RowsPanel
+                key={`${detail.scopeKey}:${detail.id}`}
+                datasetId={detail.id}
+                scopeKey={detail.scopeKey}
+                recordedRows={detail.rowCount}
+                status={detail.status}
+              />
+            </>
             )
           : (
             <div style={{ ...s.muted, marginTop: 12 }}>

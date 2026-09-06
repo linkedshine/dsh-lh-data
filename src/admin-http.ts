@@ -7,6 +7,7 @@
  *   GET    /datasets               聚合列表（?q=&page=&pageSize=）
  *   POST   /datasets               新建空数据集（body 含 scopeKey 与列定义）
  *   GET    /datasets/:id?scope=    单条详情
+ *   GET    /datasets/:id/rows?scope=&page=&pageSize=   分页查看表数据（只读）
  *   PATCH  /datasets/:id?scope=    改名 / 改描述 / 改来源
  *   DELETE /datasets/:id?scope=    连同物理表与元数据删除
  *
@@ -19,6 +20,7 @@ import {
   createDataset,
   deleteDataset,
   getDataset,
+  listDatasetRows,
   listDatasets,
   listScopes,
   patchDataset,
@@ -35,7 +37,7 @@ import {
   type RouteResponse,
 } from './http-common'
 
-type Resource = { kind: 'scopes' } | { kind: 'datasets'; id?: string }
+type Resource = { kind: 'scopes' } | { kind: 'datasets'; id?: string; rows?: boolean }
 
 /** `/api/lh-data/admin` 之后的路径解析。 */
 function parseAdminPath(pathname: string): Resource | undefined {
@@ -44,8 +46,11 @@ function parseAdminPath(pathname: string): Resource | undefined {
   if (rest === '' || rest === 'scopes') return { kind: 'scopes' }
   if (rest === 'datasets') return { kind: 'datasets' }
   const parts = rest.split('/')
-  if (parts[0] === 'datasets' && parts[1] !== undefined && parts[1].length > 0 && parts.length === 2) {
-    return { kind: 'datasets', id: decodeURIComponent(parts[1]) }
+  if (parts[0] === 'datasets' && parts[1] !== undefined && parts[1].length > 0) {
+    const id = decodeURIComponent(parts[1])
+    // `/datasets/:id/rows` —— 表数据分页；更深或别的子路径一律不认（404）。
+    if (parts.length === 2) return { kind: 'datasets', id }
+    if (parts.length === 3 && parts[2] === 'rows') return { kind: 'datasets', id, rows: true }
   }
   return undefined
 }
@@ -117,6 +122,15 @@ export function registerAdminRoutes(services: DataServices): (() => void) | unde
       }
 
       const scope = requireScope(params)
+      if (resource.rows === true) {
+        if (method !== 'GET') {
+          methodNotAllowed(response)
+          return
+        }
+        const rows = await listDatasetRows(services, scope, resource.id, Object.fromEntries(params))
+        sendJson(response, 200, rows)
+        return
+      }
       if (method === 'GET') {
         const detail = await getDataset(services, scope, resource.id)
         sendJson(response, 200, detail)
