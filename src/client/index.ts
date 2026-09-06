@@ -106,6 +106,62 @@ function formatCell(value: unknown): string {
   return String(value)
 }
 
+// ── CSV 导出（纯字符串构造，不引入任何依赖） ─────────────────────────────
+
+/** 命中即需要加引号转义的字符：逗号、双引号、回车、换行。 */
+const CSV_NEEDS_QUOTE = /[",\r\n]/
+/** Excel 公式注入的高危前缀；只对文本值生效，负数等数值原样导出。 */
+const CSV_RISKY_PREFIX = /^[=+\-@\t\r]/
+
+function toCsvCell(value: unknown): string {
+  let text = formatCell(value)
+  if (text.length === 0) return ''
+  // 前置单引号：Excel 会把它当公式执行，内容本身不变。
+  if (typeof value === 'string' && CSV_RISKY_PREFIX.test(text)) text = `'${text}`
+  if (CSV_NEEDS_QUOTE.test(text)) text = `"${text.replace(/"/g, '""')}"`
+  return text
+}
+
+function toCsvRow(cells: unknown[]): string {
+  return cells.map(cell => toCsvCell(cell)).join(',')
+}
+
+/** 表头 + 数据行；行分隔用 `\r\n` 且末行收尾，Excel / Numbers 都不会串列。 */
+function toCsv(columns: string[], rows: Record<string, unknown>[]): string {
+  const lines = [toCsvRow(columns)]
+  for (const row of rows) lines.push(toCsvRow(columns.map(column => row[column])))
+  return `${lines.join('\r\n')}\r\n`
+}
+
+/** 只拼数据行：导出逐页追加时用（表头由 `toCsv` 的首页分片带出）。 */
+function toCsvRows(columns: string[], rows: Record<string, unknown>[]): string {
+  if (rows.length === 0) return ''
+  return `${rows.map(row => toCsvRow(columns.map(column => row[column]))).join('\r\n')}\r\n`
+}
+
+/** 文件名 `名称-YYYYMMDD-HHmmss.csv`，剔除文件系统不接受与控制字符。 */
+function buildCsvFileName(name: string, now: Date = new Date()): string {
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+    + `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  const safe = name.replace(/[\\/:*?"<>|\r\n\t]/g, '_').trim()
+  return `${safe.length > 0 ? safe : 'dataset'}-${stamp}.csv`
+}
+
+/** Blob + 临时 `<a download>` 触发下载；前置 BOM 让 Excel 认成 UTF-8。 */
+function downloadCsv(filename: string, text: string): void {
+  const url = URL.createObjectURL(new Blob([`\uFEFF${text}`], { type: 'text/csv;charset=utf-8' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.style.display = 'none'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  // 立刻回收会让部分浏览器来不及取流，延后一拍释放。
+  setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
 // ── 卡片 ──────────────────────────────────────────────────────────────────
 
 interface CardState {
@@ -114,12 +170,24 @@ interface CardState {
   message?: string
 }
 
+/** 导出进度与结果（与分页取数状态分开，互不覆盖）。 */
+interface ExportState {
+  running: boolean
+  progress?: { done: number; total: number }
+  error?: string
+}
+
 function DatasetViewCard(props: ToolCallViewProps): React.ReactElement | null {
   const meta = useMemo(() => asViewMeta(props.block?.meta), [props.block])
   const [page, setPage] = useState(1)
   const [sort, setSort] = useState<{ column: string; order: 'asc' | 'desc' } | undefined>(undefined)
   const [state, setState] = useState<CardState>({ status: 'loading' })
   const requestId = useRef(0)
+  // 导出走独立通道：翻页不打断它，只有卸载与排序变更才中止。
+  const exportAbort = useRef<AbortController | undefined>(undefined)
+  const [exportState, setExportState] = useState<ExportState>({ running: false })
+
+  useEffect(() => () => exportAbort.current?.abort(), [])
 
   useEffect(() => {
     if (meta === undefined) return
@@ -164,11 +232,82 @@ function DatasetViewCard(props: ToolCallViewProps): React.ReactElement | null {
 
   const toggleSort = useCallback((column: string) => {
     if (meta === undefined || !meta.sortable.includes(column)) return
+    // 顺序变了，正在导出的那份行序就作废。
+    if (exportAbort.current !== undefined) {
+      exportAbort.current.abort()
+      exportAbort.current = undefined
+      setExportState({ running: false })
+    }
     setPage(1)
     setSort(previous => previous?.column === column
       ? { column, order: previous.order === 'asc' ? 'desc' : 'asc' }
       : { column, order: 'asc' })
   }, [meta])
+
+  /**
+   * 导出全部可浏览行为 CSV：把 `pageSize` 顶到 `maxPageSize`，从第 1 页顺序翻到
+   * 末页，不受当前页码/每页行数限制。每页转成字符串分片后即丢掉行对象，
+   * 避免几万行对象同时常驻；最后拼一次 Blob 触发下载。
+   */
+  const exportCsv = useCallback(() => {
+    if (meta === undefined) return
+    exportAbort.current?.abort()
+    const controller = new AbortController()
+    exportAbort.current = controller
+    setExportState({ running: true, progress: { done: 0, total: meta.totalRows } })
+
+    void (async () => {
+      try {
+        const base = new URL(meta.endpoint, window.location.origin)
+        base.searchParams.set('pageSize', String(Math.max(1, Math.floor(meta.maxPageSize > 0 ? meta.maxPageSize : meta.pageSize))))
+        if (sort !== undefined) {
+          base.searchParams.set('sort', sort.column)
+          base.searchParams.set('order', sort.order)
+        }
+
+        const chunks: string[] = []
+        let exportColumns = meta.columns.map(column => column.name)
+        let totalRows = meta.totalRows
+        let totalPages = 1
+        let done = 0
+
+        for (let index = 1; index <= totalPages; index += 1) {
+          if (controller.signal.aborted) return
+          const url = new URL(base.toString())
+          url.searchParams.set('page', String(index))
+          const response = await fetch(url.toString(), { signal: controller.signal, credentials: 'same-origin' })
+          if (!response.ok) {
+            const body = await response.json().catch(() => null) as { error?: { code?: string } } | null
+            if (controller.signal.aborted) return
+            throw new Error(body?.error?.code === 'VIEW_NOT_FOUND' || response.status === 404
+              ? '结果已过期，请重新查询'
+              : `导出失败（HTTP ${response.status}）`)
+          }
+          const current = await response.json() as PagePayload
+          if (controller.signal.aborted) return
+          if (index === 1) {
+            // 列集合与总页数只认首屏，避免中途数据变化导致串列。
+            exportColumns = current.columns.length > 0 ? current.columns : exportColumns
+            totalRows = current.totalRows
+            totalPages = Math.max(1, current.totalPages)
+            chunks.push(toCsv(exportColumns, current.rows))
+          } else {
+            chunks.push(toCsvRows(exportColumns, current.rows))
+          }
+          done += current.rows.length
+          setExportState({ running: true, progress: { done, total: totalRows } })
+        }
+
+        downloadCsv(buildCsvFileName(meta.name), chunks.join(''))
+        if (exportAbort.current === controller) exportAbort.current = undefined
+        setExportState({ running: false })
+      } catch (error) {
+        if (controller.signal.aborted) return
+        if (exportAbort.current === controller) exportAbort.current = undefined
+        setExportState({ running: false, error: error instanceof Error ? error.message : `导出失败：${String(error)}` })
+      }
+    })()
+  }, [meta, sort])
 
   // 无视图（小结果集 / 主机未启用视图）：退化为纯文本，不发起任何请求。
   if (meta === undefined) {
@@ -228,6 +367,18 @@ function DatasetViewCard(props: ToolCallViewProps): React.ReactElement | null {
         onClick: () => setPage(current => Math.min(totalPages, current + 1)),
       }, '下一页'),
       !meta.stable ? React.createElement('span', { style: styles.muted }, '（该查询未声明稳定排序，仅展示首页）') : null,
+      React.createElement('button', {
+        type: 'button',
+        style: styles.button,
+        disabled: exportState.running || state.status === 'error',
+        title: `按当前排序导出全部可浏览行（${servableRows} 行）为 CSV`,
+        onClick: exportCsv,
+      }, exportState.running
+        ? `导出中…（${exportState.progress?.done ?? 0} / ${exportState.progress?.total ?? servableRows} 行）`
+        : '导出 CSV'),
+      exportState.error === undefined
+        ? null
+        : React.createElement('span', { style: styles.error }, exportState.error),
     ))
 }
 
