@@ -48,10 +48,17 @@ pnpm run typecheck:client   # 仅客户端
 npx @deepseek-ai/dsh web
 ```
 
-### 安装插件（本地源码）
+### 安装插件
 
+
+本地源码
 ```
 npx @deepseek-ai/dsh plugin --profile web add D:\fastwork\projects\node\dsh-lh-data
+```
+
+github
+```
+npx @deepseek-ai/dsh plugin --profile web add https://github.com/linkedshine/dsh-lh-data.git
 ```
 
 删除：
