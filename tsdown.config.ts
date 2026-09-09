@@ -1,5 +1,11 @@
 import { defineConfig, type UserConfig } from 'tsdown'
 
+/**
+ * 数据库驱动是**可选依赖**：运行时用变量说明符 `await import(spec)` 动态加载，
+ * 本地与用户环境里都可能没有这两个包。声明 external，打包器就不会尝试解析它们。
+ */
+const OPTIONAL_DRIVERS = ['mysql2', 'mysql2/promise', 'pg']
+
 // 主机半身：入口为插件主文件；运行时 JS 输出到 lib/，声明文件输出到 lib/types/。
 // 源码使用 NodeNext 风格的 .js 扩展名引用，tsdown 会自动解析到 .ts 源文件。
 // 两个产物并行构建且共用 lib/，因此谁都不能开 `clean`：清理统一由
@@ -11,6 +17,7 @@ const host: UserConfig = {
   outDir: 'lib',
   dts: true,
   clean: false,
+  external: OPTIONAL_DRIVERS,
 }
 
 /**

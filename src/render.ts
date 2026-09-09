@@ -210,6 +210,74 @@ export function renderQueryPreview(input: QueryPreviewInput): string {
   return lines.join('\n')
 }
 
+// ── 数据源（脱敏：不含密码、不含远端凭据） ──────────────────────────────
+
+export interface SourceListItem {
+  id: string
+  name: string
+  type: string
+  host: string
+  port: number
+  database: string
+  status: string
+  lastError: string | null
+  lastCheckedAt: number | null
+}
+
+export interface SourceTableItem {
+  tableName: string
+  schemaName: string | null
+  rowCount: number
+  columnCount: number
+  primaryKey: string | null
+}
+
+export function renderSourceList(items: SourceListItem[]): string {
+  if (items.length === 0) return '还没有登记任何数据源。在「设置 → 数据集 → 数据源」里新建，或用管理接口登记。'
+  const rows = items.map(item => [
+    item.id,
+    item.name,
+    item.type,
+    `${item.host}:${String(item.port)}`,
+    item.database,
+    item.status,
+    item.lastError ?? '-',
+    item.lastCheckedAt === null ? '-' : formatTimestamp(item.lastCheckedAt),
+  ])
+  return `共 ${items.length} 个数据源：\n\n${renderTable(
+    ['sourceId', '名称', '类型', '地址', '库名', '状态', '最近错误', '最近检测'],
+    rows,
+  )}`
+}
+
+export function renderSourceTables(sourceName: string, schema: string | null, items: SourceTableItem[]): string {
+  if (items.length === 0) return `数据源「${sourceName}」${schema === null ? '' : `（schema ${schema}）`}里没有匹配的表。`
+  const rows = items.map(item => [
+    item.tableName,
+    item.schemaName ?? '-',
+    item.rowCount < 0 ? '未知' : String(item.rowCount),
+    String(item.columnCount),
+    item.primaryKey ?? '-',
+  ])
+  return `数据源「${sourceName}」共 ${items.length} 张表：\n\n${renderTable(['表名', 'schema', '估计行数', '列数', '主键'], rows)}`
+}
+
+export interface ConnectionTestView {
+  name: string
+  success: boolean
+  latency: number
+  version: string | null
+  error: string | null
+}
+
+export function renderConnectionTest(view: ConnectionTestView): string {
+  if (view.success) {
+    const version = view.version === null ? '' : `，版本 ${view.version}`
+    return `数据源「${view.name}」连接成功（${view.latency}ms${version}）。`
+  }
+  return `数据源「${view.name}」连接失败（${view.latency}ms）：${view.error ?? '未知错误'}`
+}
+
 /** 包装成 dsh 的回注用户消息（带 source 标记，便于去重/追踪）。 */
 export interface UserMessage {
   role: 'user'

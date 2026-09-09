@@ -18,28 +18,48 @@ import { shortHash } from './db'
 import { countRows, createDatasetTable, dropDatasetTable } from './table'
 import { quoteIdentifier } from './sql'
 import {
+  connectionOf,
+  connectSource,
+  testDraft,
+  testSource,
+  type ConnectionDraft,
+} from './datasource/connection'
+import { dataSourceErrorStatus, isDataSourceError, type DataSourceErrorCode } from './datasource/errors'
+import { importRemoteTable } from './datasource/importer'
+import type { DataSourceRecord } from './datasource/types'
+import {
   ADMIN_ROW_ID_COLUMN,
   type AdminErrorCode,
   type AdminWarning,
+  type ConnectionTestView,
   type CreateDatasetRequest,
+  type DataSourceView,
   type DatasetAdminView,
   type DatasetDetailView,
   type DatasetRowsResult,
+  type ImportSourceTableResult,
   type ListDatasetsResult,
+  type ListSourceTablesResult,
   type PatchDatasetRequest,
   type ScopeView,
 } from './admin-contract'
 import {
-  type ParsedListQuery,
-  type ParsedRowsQuery,
+  parseCreateDataSource,
+  parseImportRequest,
+  parseListQuery,
+  parsePatchDataSource,
+  parseRowsQuery,
+  parseTablesQuery,
+  parseTestDataSource,
   validateColumnPatches,
   validateColumnSpecs,
   validateDatasetName,
   validateDescription,
   validateScopeKey,
   validateSourcePath,
-  parseListQuery,
-  parseRowsQuery,
+  type ParsedListQuery,
+  type ParsedPatchSource,
+  type ParsedRowsQuery,
 } from './admin-validate'
 
 /** 业务错误：携带 HTTP 状态码与脱敏后的错误信息。 */
@@ -247,6 +267,8 @@ export async function createDataset(
     name,
     tableName,
     sourcePath,
+    sourceId: null,
+    sourceRef: null,
     description,
     rowCount: 0,
     columns,
@@ -325,4 +347,212 @@ export async function deleteDataset(
 function messageOf(error: unknown): string {
   if (error instanceof Error) return error.message.split('\n')[0]
   return String(error)
+}
+
+// ── 数据源 ───────────────────────────────────────────────────────────────
+
+/** `DataSourceError` → `AdminServiceError`（保留语义，状态码由错误码映射）。 */
+function withSourceErrors<T>(run: () => Promise<T>): Promise<T> {
+  return run().catch((error: unknown) => {
+    if (!isDataSourceError(error)) throw error
+    throw new AdminServiceError(mapSourceCode(error.code), dataSourceErrorStatus(error.code), error.message)
+  })
+}
+
+function mapSourceCode(code: DataSourceErrorCode): AdminErrorCode {
+  switch (code) {
+    case 'NOT_FOUND': return 'NOT_FOUND'
+    case 'DRIVER_MISSING': return 'DRIVER_MISSING'
+    case 'UNREACHABLE': return 'SOURCE_UNREACHABLE'
+    case 'IMPORT_FAILED': return 'IMPORT_FAILED'
+    case 'TOO_MANY_ROWS': return 'PAYLOAD_TOO_LARGE'
+    default: return 'BAD_REQUEST'
+  }
+}
+
+function assertSourcesEnabled(services: DataServices): void {
+  if (services.cfg.datasourceEnabled === false) {
+    throw new AdminServiceError('SOURCE_DISABLED', 403, '数据源功能已关闭（datasourceEnabled=false）')
+  }
+}
+
+/** 脱敏：只暴露「有没有密码」，密码本身永不出主机。 */
+function toSourceView(record: DataSourceRecord): DataSourceView {
+  return {
+    id: record.id,
+    name: record.name,
+    type: record.type,
+    host: record.host,
+    port: record.port,
+    database: record.database,
+    username: record.username,
+    hasPassword: record.passwordEnc.length > 0,
+    sslMode: record.sslMode,
+    poolMax: record.poolMax,
+    description: record.description,
+    status: record.status,
+    lastError: record.lastError,
+    lastCheckedAt: record.lastCheckedAt,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  }
+}
+
+export async function listDataSources(services: DataServices): Promise<DataSourceView[]> {
+  assertSourcesEnabled(services)
+  return (await services.sources.list()).map(toSourceView)
+}
+
+export async function getDataSource(services: DataServices, reference: string): Promise<DataSourceView> {
+  assertSourcesEnabled(services)
+  return toSourceView(await withSourceErrors(() => services.sources.require(reference)))
+}
+
+export async function createDataSource(services: DataServices, raw: unknown): Promise<DataSourceView> {
+  assertWritable(services)
+  assertSourcesEnabled(services)
+  const input = parseCreateDataSource(raw)
+  if (input.test) {
+    const result = await withSourceErrors(() => testDraft(services.cfg, input))
+    if (!result.success) {
+      throw new AdminServiceError('SOURCE_UNREACHABLE', 502, result.error ?? '连接失败')
+    }
+  }
+  const created = await services.sources.create(input)
+  if (!input.test) return toSourceView(created)
+  return toSourceView(await services.sources.update(created.id, {
+    status: 'connected',
+    lastError: null,
+    lastCheckedAt: Date.now(),
+  }))
+}
+
+/** 未落库的合并草稿：既有记录 + 补丁，用于「保存前先测连」。 */
+function mergedDraft(services: DataServices, record: DataSourceRecord, patch: ParsedPatchSource): ConnectionDraft {
+  const base = connectionOf(services.cfg, record)
+  return {
+    type: patch.type ?? record.type,
+    host: patch.host ?? base.host,
+    port: patch.port ?? base.port,
+    database: patch.database ?? base.database,
+    username: patch.username ?? base.username,
+    password: typeof patch.password === 'string' ? patch.password : base.password,
+    sslMode: patch.sslMode !== undefined ? patch.sslMode : base.sslMode,
+    poolMax: patch.poolMax !== undefined ? patch.poolMax : base.poolMax,
+  }
+}
+
+export async function patchDataSource(
+  services: DataServices,
+  reference: string,
+  raw: unknown,
+): Promise<DataSourceView> {
+  assertWritable(services)
+  assertSourcesEnabled(services)
+  const patch = parsePatchDataSource(raw)
+  const current = await withSourceErrors(() => services.sources.require(reference))
+  if (patch.test) {
+    const result = await withSourceErrors(() => testDraft(services.cfg, mergedDraft(services, current, patch)))
+    if (!result.success) {
+      throw new AdminServiceError('SOURCE_UNREACHABLE', 502, result.error ?? '连接失败')
+    }
+    patch.status = 'connected'
+    patch.lastError = null
+    patch.lastCheckedAt = Date.now()
+  }
+  return toSourceView(await services.sources.update(current.id, patch))
+}
+
+export async function deleteDataSource(services: DataServices, reference: string): Promise<{ deleted: boolean }> {
+  assertWritable(services)
+  assertSourcesEnabled(services)
+  const record = await withSourceErrors(() => services.sources.require(reference))
+  await services.sources.remove(record.id)
+  return { deleted: true }
+}
+
+/** 测已登记的数据源（`source`）或未保存的草稿（完整连接参数）。 */
+export async function testDataSource(services: DataServices, raw: unknown): Promise<ConnectionTestView> {
+  assertSourcesEnabled(services)
+  const parsed = parseTestDataSource(raw)
+  const reference = parsed.reference
+  if (reference !== undefined) {
+    const record = await withSourceErrors(() => services.sources.require(reference))
+    const result = await withSourceErrors(() => testSource(services.cfg, record))
+    await services.sources.recordCheck(record.id, result.success, result.error)
+    return result
+  }
+  const draft = parsed.draft as ConnectionDraft
+  return await withSourceErrors(() => testDraft(services.cfg, draft))
+}
+
+export async function listSourceTables(
+  services: DataServices,
+  reference: string,
+  params: Record<string, string | undefined>,
+): Promise<ListSourceTablesResult> {
+  assertSourcesEnabled(services)
+  const query = parseTablesQuery(params)
+  const record = await withSourceErrors(() => services.sources.require(reference))
+  const connector = await withSourceErrors(() => connectSource(services.cfg, record))
+  const schemas = await withSourceErrors(() => connector.getSchemas())
+  const tables = await withSourceErrors(() => connector.getTables(query.schema ?? undefined))
+  const needle = query.q.toLowerCase()
+  const matched = needle.length === 0
+    ? tables
+    : tables.filter(table => table.tableName.toLowerCase().includes(needle))
+  return {
+    schema: matched[0]?.schemaName ?? null,
+    schemas: schemas.map(entry => entry.schemaName),
+    tables: matched.map(table => ({
+      tableName: table.tableName,
+      schemaName: table.schemaName,
+      rowCount: table.rowCount,
+      primaryKey: table.primaryKey,
+      columns: table.columns.map(column => ({
+        name: column.name,
+        type: column.nativeType,
+        nullable: column.nullable,
+        description: column.comment,
+      })),
+    })),
+  }
+}
+
+export async function importSourceTable(
+  services: DataServices,
+  reference: string,
+  raw: unknown,
+): Promise<ImportSourceTableResult> {
+  assertWritable(services)
+  assertSourcesEnabled(services)
+  const request = parseImportRequest(raw)
+  // 先定位数据源：未知数据源比未知工作区更贴近调用方的意图。
+  const record = await withSourceErrors(() => services.sources.require(reference))
+  if (!(await services.store.scopes.has(request.scopeKey))) {
+    throw new AdminServiceError('SCOPE_UNKNOWN', 404, `未知工作区：${request.scopeKey}`)
+  }
+  try {
+    const result = await importRemoteTable(services, {
+      scopeKey: request.scopeKey,
+      source: record,
+      tableName: request.tableName,
+      schemaName: request.schemaName,
+      name: request.name,
+      limit: request.limit,
+    }, { signal: new AbortController().signal })
+    return {
+      datasetId: result.datasetId,
+      name: result.name,
+      rowCount: result.rowCount,
+      columnCount: result.columnCount,
+      status: result.status,
+      ...result.jobId === undefined ? {} : { jobId: result.jobId },
+    }
+  } catch (error: unknown) {
+    if (isDataSourceError(error)) {
+      throw new AdminServiceError(mapSourceCode(error.code), dataSourceErrorStatus(error.code), error.message)
+    }
+    throw new AdminServiceError('IMPORT_FAILED', 500, messageOf(error))
+  }
 }

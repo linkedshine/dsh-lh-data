@@ -87,11 +87,39 @@ export const s = {
   muted: { color: c.fg2 },
   link: { color: c.primary, cursor: 'pointer' },
   status: { fontWeight: 600 },
+  tabs: {
+    display: 'flex', gap: 18, marginBottom: 12, borderBottom: `1px solid ${c.border}`,
+  },
+  tab: {
+    padding: '0 0 6px', fontSize: 13, fontWeight: 600, color: c.fg2,
+    background: 'none', border: 'none', borderBottom: '2px solid transparent',
+    cursor: 'pointer', transition: 'color 120ms ease, border-color 120ms ease',
+  },
+  activeTab: { color: c.fg, borderBottom: `2px solid ${c.primary}` },
 } as const
 
-/** 状态圆点配色。 */
+/** 状态圆点配色（数据集）。 */
 export const STATUS_COLOR: Record<string, string> = {
   ready: c.ok,
   importing: c.warn,
   failed: c.danger,
+}
+
+/** 数据源连通状态圆点配色。 */
+export const SOURCE_STATUS_COLOR: Record<string, string> = {
+  connected: c.ok,
+  error: c.danger,
+  unknown: c.fg2,
+}
+
+export const SOURCE_STATUS_TEXT: Record<string, string> = {
+  connected: '已连通',
+  error: '连接失败',
+  unknown: '未检测',
+}
+
+/** 类型徽标底色（低饱和，跟随主题的浅底细边框）。 */
+export const TYPE_BADGE: Record<string, string> = {
+  mysql: c.primary,
+  postgresql: c.ok,
 }

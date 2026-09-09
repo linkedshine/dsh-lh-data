@@ -195,8 +195,14 @@ const config = validateConfig({
 apply(ctx, config)
 
 section('装载')
-check('八个工具已注册', ctx.toolsByName.size === 8, `实际 ${ctx.toolsByName.size}`)
+// 8 个 dataset_* + 4 个 datasource_*（数据源默认启用）。
+check('十二个工具已注册', ctx.toolsByName.size === 12, `实际 ${ctx.toolsByName.size}`)
 check('物理表名未出现在任何工具描述中', ![...ctx.toolsByName.values()].some(definition => /d_[a-z0-9]{8}_/.test(definition.description)))
+const dsOffCtx = makeCtx()
+apply(dsOffCtx, validateConfig({ dbPath: join(workspace, 'ds-off.db'), datasourceEnabled: false }))
+check('datasourceEnabled=false 时只注册 8 个 dataset_*',
+  dsOffCtx.toolsByName.size === 8, `实际 ${dsOffCtx.toolsByName.size}`)
+for (const dispose of dsOffCtx.disposers) dispose()
 
 const injected = []
 function makeExec(toolName, args) {

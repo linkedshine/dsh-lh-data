@@ -14,6 +14,9 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
+import { closeAllConnectors } from './datasource/connection'
+import { usingDefaultEncryptKey } from './datasource/crypto'
+import { createSourceStore } from './datasource/source-store'
 import { closeAllDatabases } from './db'
 import { resolveScope } from './scope'
 import { createStore, type DataConfig, type DataServices } from './store'
@@ -97,21 +100,39 @@ export const Config: Schema<Config> = Schema.object({
   adminEnabled: Schema.boolean().default(true).description('是否挂载设置页管理接口（关闭后路由不注册，前端显示不可用）'),
   adminMaxBodyBytes: Schema.number().default(65536).description('管理接口请求体字节上限'),
   adminMaxDatasets: Schema.number().default(500).description('聚合列表扫描的数据集上限，超限截断并提示'),
+
+  // 数据源（关系型数据库）
+  datasourceEnabled: Schema.boolean().default(true).description('是否启用数据源（关闭后不注册 datasource_* 工具与 /sources 接口）'),
+  datasourceFetchBatchSize: Schema.number().default(1000).description('远端表分块拉取的行数'),
+  datasourceConnectTimeoutMs: Schema.number().default(10000).description('数据源连接 / 连通性测试的超时毫秒数'),
+  datasourceMaxImportRows: Schema.number().default(0).description('单次从远端表导入的行数上限，0 表示不限'),
+  datasourceEncryptKey: Schema.string().default('').description('数据源密码的加密密钥；留空则回落到环境变量 LH_DATA_ENCRYPT_KEY'),
 })
 
 /** 注入系统提示词的使用引导（替代 v1 的 SKILL.md）。 */
-const USAGE_SECTION = [
-  '## 本地表格库（dsh-lh-data）',
-  '',
-  '- `dataset_import` 把工作区内的 .xlsx / .xls / .csv 落库；大文件自动转后台任务。',
-  '- 先 `dataset_list` 确认目标，再 `dataset_schema` 看列名与类型，然后 `dataset_query` 查询。',
-  '- 查询优先用结构化参数（columns / where / orderBy / limit）；只有在需要聚合或连接时才传 `sql`。',
-  '- `dataset_query` 只返回少量预览行与全量统计摘要；结果较大时完整数据由前端表格展示，不要逐页读取全量。',
-  '- `dataset_insert` / `dataset_update` / `dataset_delete` / `dataset_drop` 是写操作，会触发人工确认。',
-  '- 所有工具用 datasetId 或登记名指代数据集；不要猜测或拼接物理表名。',
-].join('\n')
+function usageSection(datasourceEnabled: boolean): string {
+  const base = [
+    '## 本地表格库（dsh-lh-data）',
+    '',
+    '- `dataset_import` 把工作区内的 .xlsx / .xls / .csv 落库；大文件自动转后台任务。',
+    '- 先 `dataset_list` 确认目标，再 `dataset_schema` 看列名与类型，然后 `dataset_query` 查询。',
+    '- 查询优先用结构化参数（columns / where / orderBy / limit）；只有在需要聚合或连接时才传 `sql`。',
+    '- `dataset_query` 只返回少量预览行与全量统计摘要；结果较大时完整数据由前端表格展示，不要逐页读取全量。',
+    '- `dataset_insert` / `dataset_update` / `dataset_delete` / `dataset_drop` 是写操作，会触发人工确认。',
+    '- 所有工具用 datasetId 或登记名指代数据集；不要猜测或拼接物理表名。',
+  ]
+  if (!datasourceEnabled) return base.join('\n')
+  return [
+    ...base,
+    '- 还可以从数据库取数：`datasource_list` 看已登记的数据源 → `datasource_tables` 浏览远端表 →',
+    '  `datasource_import` 把某张表导入当前工作区，之后一律用 `dataset_*` 工具操作。',
+  ].join('\n')
+}
 
 const USAGE_SECTION_ORDER = 900
+
+/** 默认加密密钥的告警一个进程只发一次。 */
+let warnedDefaultKey = false
 
 /**
  * 非 cordis 环境（如 `examples/run-import.mjs` 直接调用 apply）的轻量校验/默认值合并。
@@ -132,14 +153,20 @@ export function validateConfig(cfg: Partial<DataConfig> = {}): Config {
     'viewThresholdRows', 'viewThresholdBytes', 'previewRows', 'previewCellChars', 'previewColumns',
     'summaryMaxColumns', 'summaryMaxTextColumns', 'defaultPageSize', 'maxPageSize', 'maxViewRows',
     'adminMaxBodyBytes', 'adminMaxDatasets',
+    'datasourceFetchBatchSize', 'datasourceConnectTimeoutMs', 'datasourceMaxImportRows',
   ] as const) {
     const value = merged[key]
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
       throw new Error(`${key} must be a non-negative number`)
     }
   }
-  for (const key of ['perWorkspace', 'requireApprovalForWrites', 'allowRawSql', 'readOnly', 'summaryEnabled'] as const) {
+  for (const key of [
+    'perWorkspace', 'requireApprovalForWrites', 'allowRawSql', 'readOnly', 'summaryEnabled', 'datasourceEnabled',
+  ] as const) {
     if (typeof merged[key] !== 'boolean') throw new Error(`${key} must be a boolean`)
+  }
+  for (const key of ['dbPath', 'dbUrl', 'authToken', 'datasourceEncryptKey'] as const) {
+    if (typeof merged[key] !== 'string') throw new Error(`${key} must be a string`)
   }
   if (!['auto', 'always', 'never'].includes(merged.viewMode)) {
     throw new Error('viewMode must be one of auto / always / never')
@@ -149,9 +176,6 @@ export function validateConfig(cfg: Partial<DataConfig> = {}): Config {
   }
   if (typeof merged.viewRoutePrefix !== 'string' || !merged.viewRoutePrefix.startsWith('/')) {
     throw new Error('viewRoutePrefix must be an absolute path starting with "/"')
-  }
-  for (const key of ['dbPath', 'dbUrl', 'authToken'] as const) {
-    if (typeof merged[key] !== 'string') throw new Error(`${key} must be a string`)
   }
   return merged
 }
@@ -163,7 +187,15 @@ function targetOf(exec: ToolExec): string {
   const record = args as Record<string, unknown>
   if (typeof record.dataset === 'string' && record.dataset.trim().length > 0) return record.dataset.trim()
   if (typeof record.path === 'string' && record.path.trim().length > 0) return record.path.trim()
+  if (typeof record.source === 'string' && record.source.trim().length > 0) return record.source.trim()
   return ''
+}
+
+/** 写工具缺归属句柄时的提示文案（各工具的必填参数名不同）。 */
+function requiredHandleOf(name: string): string {
+  if (name === 'dataset_import') return 'path'
+  if (name === 'datasource_import') return 'source'
+  return 'dataset'
 }
 
 /** `tools/pre-execute` 的 next() 兜底：缺失或返回空值都按 allow 处理。 */
@@ -346,6 +378,7 @@ export function apply(ctx: Context, config: Config): void {
   const services: DataServices = {
     cfg,
     store: createStore(cfg),
+    sources: createSourceStore(cfg),
     scopeOf: exec => resolveScope(rt, cfg, exec),
   }
 
@@ -377,7 +410,7 @@ export function apply(ctx: Context, config: Config): void {
       systemPrompt?.section?.({
         name: `${PLUGIN_NAME}:usage`,
         order: USAGE_SECTION_ORDER,
-        text: USAGE_SECTION,
+        text: usageSection(cfg.datasourceEnabled),
       })
     })
   }
@@ -411,20 +444,34 @@ export function apply(ctx: Context, config: Config): void {
     if (!WRITE_TOOLS.has(exec.name)) return undefined
     const target = targetOf(exec)
     if (target.length === 0) {
-      return `${exec.name} 必须指定 ${exec.name === 'dataset_import' ? 'path' : 'dataset'}（datasetId 或登记名）`
+      return `${exec.name} 必须指定 ${requiredHandleOf(exec.name)}（datasetId / sourceId 或登记名）`
     }
     return undefined
   })
   if (unguard !== undefined && typeof rt.effect === 'function') rt.effect(() => () => unguard())
 
-  // 非 cordis 管理的资源（libSQL 客户端）挂到插件 fiber，卸载时确定性释放。
-  if (typeof rt.effect === 'function') rt.effect(() => () => closeAllDatabases())
+  // 非 cordis 管理的资源挂到插件 fiber，卸载时确定性释放。
+  if (typeof rt.effect === 'function') {
+    rt.effect(() => () => {
+      closeAllDatabases()
+      void closeAllConnectors()
+    })
+  }
+
+  // 每次装载都提示会很吵（HMR / 多剖面会反复 apply），一个进程只说一次。
+  if (cfg.datasourceEnabled && !warnedDefaultKey && usingDefaultEncryptKey(cfg.datasourceEncryptKey)) {
+    warnedDefaultKey = true
+    warn(`${PLUGIN_NAME}: 未配置 datasourceEncryptKey / LH_DATA_ENCRYPT_KEY，数据源密码使用内置默认密钥（生产环境不安全）`)
+  }
 
   log(`${PLUGIN_NAME} applied (readOnly=${String(cfg.readOnly)}, approval=${String(cfg.requireApprovalForWrites)})`)
 }
 
 // ── 测试/调试导出（不参与插件装载） ────────────────────────────────────────
 export { closeAllDatabases } from './db'
+export { buildColumns, fillSamples, mapRowKeys } from './datasource/columns'
+export { decryptPassword, encryptPassword, isValidEncryptedFormat, resolveEncryptKey } from './datasource/crypto'
+export { closeAllConnectors } from './datasource/connection'
 export {
   inferColumnType,
   isCodeOrIdField,

@@ -8,13 +8,21 @@
 
 import {
   ADMIN_API_BASE,
+  type ConnectionTestView,
+  type CreateDataSourceRequest,
   type CreateDatasetRequest,
+  type DataSourceView,
   type DatasetAdminView,
   type DatasetDetailView,
   type DatasetRowsResult,
+  type ImportSourceTableRequest,
+  type ImportSourceTableResult,
   type ListDatasetsResult,
+  type ListSourceTablesResult,
+  type PatchDataSourceRequest,
   type PatchDatasetRequest,
   type ScopeView,
+  type TestDataSourceRequest,
 } from '../../admin-contract'
 
 /** 服务端脱敏后的错误（含中文 message 与机器码）。 */
@@ -104,4 +112,43 @@ export function deleteDataset(
   return request(`/datasets/${encodeURIComponent(id)}?scope=${encodeURIComponent(scope)}`, {
     method: 'DELETE',
   })
+}
+
+// ── 数据源 ───────────────────────────────────────────────────────────────
+
+export function listDataSources(): Promise<{ sources: DataSourceView[] }> {
+  return request('/sources')
+}
+
+export function getDataSource(id: string): Promise<DataSourceView> {
+  return request(`/sources/${encodeURIComponent(id)}`)
+}
+
+export function createDataSource(body: CreateDataSourceRequest): Promise<DataSourceView> {
+  return request('/sources', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function patchDataSource(id: string, body: PatchDataSourceRequest): Promise<DataSourceView> {
+  return request(`/sources/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) })
+}
+
+export function deleteDataSource(id: string): Promise<{ deleted: boolean }> {
+  return request(`/sources/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+/** 测已登记的数据源（给 source）或未保存的草稿（给完整参数）。 */
+export function testDataSource(body: TestDataSourceRequest): Promise<ConnectionTestView> {
+  return request('/sources/test', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function listSourceTables(id: string, schema?: string, query?: string): Promise<ListSourceTablesResult> {
+  const params = new URLSearchParams()
+  if (schema !== undefined && schema.trim().length > 0) params.set('schema', schema)
+  if (query !== undefined && query.trim().length > 0) params.set('q', query)
+  const suffix = params.toString().length > 0 ? `?${params.toString()}` : ''
+  return request(`/sources/${encodeURIComponent(id)}/tables${suffix}`)
+}
+
+export function importSourceTable(id: string, body: ImportSourceTableRequest): Promise<ImportSourceTableResult> {
+  return request(`/sources/${encodeURIComponent(id)}/import`, { method: 'POST', body: JSON.stringify(body) })
 }

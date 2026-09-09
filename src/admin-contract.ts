@@ -58,6 +58,31 @@ export const ADMIN_MAX_SAMPLE_VALUES = 5
 /** 单个样例值的字符上限。 */
 export const ADMIN_MAX_SAMPLE_LENGTH = 40
 
+// ── 数据源录入上限 ───────────────────────────────────────────────────────
+
+export const ADMIN_MAX_SOURCE_NAME_LENGTH = 80
+export const ADMIN_MAX_HOST_LENGTH = 255
+export const ADMIN_MAX_DATABASE_LENGTH = 128
+export const ADMIN_MAX_USERNAME_LENGTH = 128
+export const ADMIN_MAX_PASSWORD_LENGTH = 256
+export const ADMIN_MIN_PORT = 1
+export const ADMIN_MAX_PORT = 65535
+export const ADMIN_MAX_POOL_MAX = 100
+
+/** 数据源类型下拉的可选项（顺序即展示顺序）。 */
+export const ADMIN_SOURCE_TYPES: readonly string[] = ['mysql', 'postgresql']
+
+export const ADMIN_SOURCE_TYPE_LABELS: Readonly<Record<string, string>> = {
+  mysql: 'MySQL',
+  postgresql: 'PostgreSQL',
+}
+
+/** 各类型的默认端口（前端带出与后端兜底共用）。 */
+export const ADMIN_SOURCE_DEFAULT_PORTS: Readonly<Record<string, number>> = {
+  mysql: 3306,
+  postgresql: 5432,
+}
+
 // ── 类型 ─────────────────────────────────────────────────────────────────
 
 /** 与 `parse.ts` 的 `ColumnType` 同构（本文件不能 import 主机侧的 parse）。 */
@@ -173,6 +198,121 @@ export interface DatasetColumnPatch {
   sample?: unknown[]
 }
 
+// ── 数据源 ───────────────────────────────────────────────────────────────
+
+/**
+ * 设置页可见的一条数据源。
+ * **密码永不回显**：只给 `hasPassword`，前端据此显示「已设置 · 不可查看」。
+ */
+export interface DataSourceView {
+  id: string
+  name: string
+  type: string
+  host: string
+  port: number
+  database: string
+  username: string
+  hasPassword: boolean
+  sslMode: string | null
+  poolMax: number | null
+  description: string | null
+  status: string
+  lastError: string | null
+  lastCheckedAt: number | null
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ConnectionTestView {
+  success: boolean
+  latency: number
+  version: string | null
+  error: string | null
+}
+
+/** 新建数据源。`test` 为 true 时先测连，不通就不落库。 */
+export interface CreateDataSourceRequest {
+  name: string
+  type: string
+  host: string
+  port?: number | null
+  database: string
+  username: string
+  password?: string
+  sslMode?: string | null
+  poolMax?: number | null
+  description?: string | null
+  test?: boolean
+}
+
+/** 改数据源：字段缺省表示不改；`password` 给了字符串就替换（空串表示置空）。 */
+export interface PatchDataSourceRequest {
+  name?: string
+  type?: string
+  host?: string
+  port?: number | null
+  database?: string
+  username?: string
+  password?: string
+  sslMode?: string | null
+  poolMax?: number | null
+  description?: string | null
+  test?: boolean
+}
+
+/** `POST /sources/test` 的请求体：给 `source` 就测已登记的，给全参数就测未保存的草稿。 */
+export interface TestDataSourceRequest {
+  source?: string
+  type?: string
+  host?: string
+  port?: number | null
+  database?: string
+  username?: string
+  password?: string
+  sslMode?: string | null
+  poolMax?: number | null
+}
+
+export interface SourceTableView {
+  tableName: string
+  schemaName: string | null
+  /** 远端估计行数；-1 表示未知。 */
+  rowCount: number
+  primaryKey: string | null
+  columns: {
+    name: string
+    type: AdminColumnType
+    nullable: boolean
+    description: string | null
+  }[]
+}
+
+export interface ListSourceTablesResult {
+  /** 实际使用的 schema（MySQL 为库名，PostgreSQL 默认 public）。 */
+  schema: string | null
+  /** 可选 schema 列表（PostgreSQL 多个，MySQL 一个）。 */
+  schemas: string[]
+  tables: SourceTableView[]
+}
+
+/** `POST /sources/:id/import`。 */
+export interface ImportSourceTableRequest {
+  scopeKey: string
+  tableName: string
+  schemaName?: string | null
+  name?: string | null
+  limit?: number | null
+}
+
+export interface ImportSourceTableResult {
+  datasetId: string
+  name: string
+  rowCount: number
+  columnCount: number
+  status: 'ready' | 'running'
+  jobId?: string
+}
+
 /** 字段缺省表示不改动。 */
 export interface PatchDatasetRequest {
   name?: string
@@ -194,6 +334,10 @@ export type AdminErrorCode =
   | 'DUPLICATE_NAME'
   | 'INVALID_COLUMNS'
   | 'QUERY_FAILED'
+  | 'SOURCE_DISABLED'
+  | 'DRIVER_MISSING'
+  | 'SOURCE_UNREACHABLE'
+  | 'IMPORT_FAILED'
 
 /** 错误响应体。主机侧统一脱敏：不回显 SQL 与物理表名。 */
 export interface AdminErrorBody {

@@ -9,13 +9,14 @@ dsh（deepseek-harness）插件：把工作区内的 Excel / CSV 导入本地 Tu
 ## 特性
 
 - **8 个 `dataset_*` 工具**：导入、列表、列信息、查询、插入、更新、删除、删表。
+- **4 个 `datasource_*` 工具**：登记 MySQL / PostgreSQL 连接、测试连通、浏览远端表、把远端表全量导入成数据集；导入产出的数据集与文件导入完全同权。
 - **句柄化**：SQL 里的物理表名由插件持有与替换，模型与 HTTP 响应中都不可见。
 - **结果视图**：大结果集自动建视图，模型只拿片段，前端卡片翻页 / 排序 / 导出 CSV；视图持久化，重启后仍可翻页。
 - **工作区隔离**：数据集按会话 cwd（或 WorkspaceId）分 scope，导入文件必须落在工作区内（禁止 `../` 穿越）。
 - **写操作 fail-closed**：`tools/pre-execute` 门禁 + 单调守卫 + 只读模式三重保护。
 - **只读 SQL 校验**：原始 SQL 仅允许单条 `SELECT` / `WITH` / `EXPLAIN`，表引用白名单，无 DDL / 写关键字。
-- **设置页**：浏览器「设置 → 数据集」可聚合查看、新建空表、改描述、分页看数据、删除。
-- **可选依赖降级**：`jobs` / `systemPrompt` / `webServer` / `connection` 任一缺失都只降级对应能力，不影响装载。
+- **设置页**：浏览器「设置 → 数据集」内分「数据集 / 数据源」两个页签，可聚合查看、新建空表、改描述、分页看数据、删除；数据源页签支持登记连接、测试连通、浏览远端表并一键导入。
+- **可选依赖降级**：`jobs` / `systemPrompt` / `webServer` / `connection` 任一缺失都只降级对应能力，不影响装载；`mysql2` / `pg` 已随插件**默认安装**，但仍走动态加载——只用文件导入时不会拖慢启动，万一运行环境缺包也给明确安装提示而非抛裸栈。
 
 ---
 
@@ -75,7 +76,12 @@ npx @deepseek-ai/dsh plugin --profile web remove dsh-lh-data
 pnpm run import   # examples/run-import.mjs：单元校验 + 导入 → list → schema → query → 写操作 → 门禁 → 生命周期
 pnpm run view     # examples/run-view.mjs  ：大结果集 → 片段 → 前端分页 → 鉴权 / 持久化恢复 / 降级
 pnpm run admin    # examples/run-admin.mjs ：聚合列表 / 新建空表 / 改名改描述 / 删除 / 分页看数据
+pnpm run datasource  # examples/run-datasource.mjs：加解密 / 列映射 / 装载门禁 / 数据源 CRUD / 脱敏 / 鉴权 / 降级
 ```
+
+`mysql2` / `pg` 已随插件默认安装，`pnpm install` 后即可连接数据库。想跑真实的端到端导入验证：把脚本顶部的 `DEMO` 改成你的库，再 `node examples/run-datasource.mjs --live`。
+
+连接失败（端口未开放、主机不可达、账号密码错误、库不存在等）时，工具与设置页统一返回**可读的中文原因**（如「连接被拒绝（主机可达，但端口未开放或服务未启动）」），不会把驱动的裸栈抛给模型或浏览器；驱动确实缺失时仍给 `pnpm add mysql2` / `pnpm add pg` 提示。
 
 ---
 
@@ -91,8 +97,16 @@ pnpm run admin    # examples/run-admin.mjs ：聚合列表 / 新建空表 / 改�
 | `dataset_update` | 写 | `dataset`、`rowId`、`data` | `updated`、`changedColumns[]` |
 | `dataset_delete` | 写 | `dataset`、`rowId` | `deleted`、剩余 `rowCount` |
 | `dataset_drop` | 写 | `dataset` | `dropped`（连同物理表与元数据删除，不可恢复） |
+| `datasource_list` | 读 | — | `sources[]`：`id`、`name`、`type`、`host`、`port`、`database`、`status`、`lastError`、`lastCheckedAt`（不含密码） |
+| `datasource_test` | 读 | `source` | `success` / `latency` / `version` / `error` |
+| `datasource_tables` | 读 | `source`、`schema?`、`q?` | `tables[]`：表名 / schema / 估计行数 / 列结构（列名 / 推断类型 / 可空 / 注释） |
+| `datasource_import` | 写 | `source`、`table`、`schema?`、`name?`、`limit?` | `datasetId`、行列数、`status: ready \| running`、`jobId?` |
 
 要点：
+
+- `datasource_*` 的连接密码在**任何**工具描述、返回值、HTTP 响应、日志与错误文本里都不回显，只暴露「是否设置了密码」。
+- `datasource_import` 加入写门禁；`readOnly=true` 或 `datasourceEnabled=false` 时直接拒绝；导入产出的数据集落在**当前会话工作区**，之后一律用 `dataset_*` 工具操作。
+- 驱动（`mysql2` / `pg`）未安装时，`datasource_test` / `datasource_tables` / `datasource_import` 返回可读错误并提示 `pnpm add mysql2`（或 `pg`），不抛裸栈。
 
 - `dataset` 一律传 **datasetId 或登记名**，不要猜物理表名。
 - 查询优先用结构化参数；只有需要聚合 / 连接时才传 `sql`，用保留别名 `ds` 指代数据集，例如：
@@ -117,6 +131,23 @@ pnpm run admin    # examples/run-admin.mjs ：聚合列表 / 新建空表 / 改�
 | `source_path` / `description` / `row_count` / `columns` / `status` / `error` / `created_at` / `updated_at` | 元数据 |
 
 `status`：`importing` → `ready` / `failed`。导入失败会删掉半截物理表并标记 `failed`，非 `ready` 数据集会被拒绝读写。
+
+来自数据源的数据集会在 `source_id` / `source_ref` 两列留下定位信息（`source_ref` 形如 `schema.table` 或 `table`，脱敏、不含凭据）；`source_path` 同时写成 `db:<数据源名>`，因此 `dataset_list` 与设置页搜索零改动即可按数据源名检索。
+
+### 数据源登记表 `lh_data_sources`（catalog 库，全局共享）
+
+数据源连接配置与数据集**不在同一个库**：数据源存 catalog 库（与 `dataset_scopes` 同级），跨工作区共享；导入产出的数据集仍落在各 scope 业务库。
+
+| 列 | 说明 |
+| --- | --- |
+| `id` | `dsrc_<ts36><rand>`，对外的 sourceId |
+| `name` | 登记名，全局唯一 |
+| `type` / `host` / `port` / `database` / `username` | 连接参数 |
+| `password_enc` | AES-256-GCM 密文（`iv:authTag:encrypted`），密钥取自 `datasourceEncryptKey` → `LH_DATA_ENCRYPT_KEY` → 内置默认；**永不回显** |
+| `ssl_mode` / `pool_max` / `description` | 可选连接参数与说明 |
+| `status` | `unknown` / `connected` / `error`，最近一次测试结论 |
+| `last_error` / `last_checked_at` | 最近一次测试的脱敏错误与时间戳 |
+| `created_at` / `updated_at` | 元数据 |
 
 ### 物理表
 
@@ -179,10 +210,18 @@ CREATE TABLE <table_name> (
 | `GET` | `/datasets/:id/rows?scope=&page=&pageSize=` | 分页查看表数据（只读） |
 | `PATCH` | `/datasets/:id?scope=` | 改名 / 改描述 / 改来源 / 改列说明与样例 |
 | `DELETE` | `/datasets/:id?scope=` | 连同物理表与元数据删除 |
+| `GET` | `/sources` | 数据源列表（脱敏，不含密码） |
+| `POST` | `/sources` | 新建数据源（`test:true` 时先测连，不通不落库） |
+| `POST` | `/sources/test` | 测试连接（body 可含未保存的连接参数） |
+| `GET` | `/sources/:id` | 单条详情（不含密码） |
+| `PATCH` | `/sources/:id` | 改连接参数 / 改密码 / 改名改描述 |
+| `DELETE` | `/sources/:id` | 删除数据源 |
+| `GET` | `/sources/:id/tables?schema=&q=` | 列远端表（含 schema / 估计行数 / 列结构） |
+| `POST` | `/sources/:id/import` | 把远端表导入指定工作区（`body.scopeKey` + 表名） |
 
-约束：列名 / 类型 / 可空性对应物理表 DDL，创建后**不可改**；`scope` 由调用方从「已知工作区列表」回传，不接收任意路径。错误响应脱敏，不回显 SQL 与物理表名。
+约束：列名 / 类型 / 可空性对应物理表 DDL，创建后**不可改**；`scope` 由调用方从「已知工作区列表」回传，不接收任意路径。错误响应脱敏，不回显 SQL 与物理表名，数据源接口也绝不回显密码。
 
-错误码：`UNAUTHORIZED` / `FORBIDDEN` / `NOT_FOUND` / `METHOD_NOT_ALLOWED` / `BAD_REQUEST` / `PAYLOAD_TOO_LARGE` / `READ_ONLY` / `ADMIN_DISABLED` / `SCOPE_UNKNOWN` / `DUPLICATE_NAME` / `INVALID_COLUMNS` / `QUERY_FAILED`。
+错误码：`UNAUTHORIZED` / `FORBIDDEN` / `NOT_FOUND` / `METHOD_NOT_ALLOWED` / `BAD_REQUEST` / `PAYLOAD_TOO_LARGE` / `READ_ONLY` / `ADMIN_DISABLED` / `SCOPE_UNKNOWN` / `DUPLICATE_NAME` / `INVALID_COLUMNS` / `QUERY_FAILED` / `SOURCE_DISABLED`（datasourceEnabled=false）/ `DRIVER_MISSING`（驱动未安装）/ `SOURCE_UNREACHABLE`（连接失败）/ `IMPORT_FAILED`（导入异常）。
 
 浏览器侧在「设置 → 数据集」（`ADMIN_SECTION_ID = lh-data`，order 100）注册分区，组件见 `src/client/settings/`。
 
@@ -235,6 +274,16 @@ CREATE TABLE <table_name> (
 | `adminMaxBodyBytes` | `65536` | 请求体字节上限 |
 | `adminMaxDatasets` | `500` | 聚合列表扫描上限 |
 
+### 数据源（关系型数据库）
+
+| 键 | 默认 | 说明 |
+| --- | --- | --- |
+| `datasourceEnabled` | `true` | 总开关；`false` 时不注册 `datasource_*` 工具与 `/sources` 接口 |
+| `datasourceFetchBatchSize` | `1000` | 远端表分块拉取的行数 |
+| `datasourceConnectTimeoutMs` | `10000` | 连接 / 连通性测试的超时毫秒数 |
+| `datasourceMaxImportRows` | `0` | 单次从远端表导入的行数上限，`0` 表示不限 |
+| `datasourceEncryptKey` | `''` | 数据源密码的加密密钥；留空则回落到环境变量 `LH_DATA_ENCRYPT_KEY`，再空用内置默认并告警（生产不安全） |
+
 ---
 
 ## 作用域与安全
@@ -266,10 +315,11 @@ src/
   http.ts             视图分页路由
   http-common.ts      鉴权、请求体、响应公共逻辑
   admin*.ts           设置页服务层 / 路由 / 校验 / 双半身契约
-  tools/              registry（8 工具聚合）、import、read、write
-  client/             浏览器半身：查询结果卡片 + 设置页分区
+  tools/              registry（12 工具聚合）、import、read、write、datasource
+  datasource/         数据源模块：types / crypto / columns / driver / connector（mysql|pg）/ connection / source-sql / source-store / importer
+  client/             浏览器半身：查询结果卡片 + 设置页分区（DatasetsPanel / DataSourcesPanel / DataSourceForm / SourceTablesPanel）
 docs/                 设计文档
-examples/             三个自包含验证脚本（构造最小假 ctx 跑通全链路）
+examples/             四个自包含验证脚本（构造最小假 ctx 跑通全链路）
 ```
 
 ## 设计文档

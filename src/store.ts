@@ -6,6 +6,7 @@
  */
 
 import { resolveDatabase, shortHash, type Database, type Row } from './db'
+import type { DataSourceStore } from './datasource/source-store'
 import { createScopeRegistry, type ScopeRegistry } from './scope-registry'
 import type { ColumnInfo } from './parse'
 import type { ScopeContext } from './scope'
@@ -56,6 +57,18 @@ export interface DataConfig {
   adminMaxBodyBytes: number
   /** 聚合列表扫描的数据集上限，超限即截断并提示。 */
   adminMaxDatasets: number
+
+  // ── 数据源（新增；默认值见 index.ts 的 Config schema） ──
+  /** 是否启用数据源（关闭后不注册 datasource_* 工具与 /sources 接口）。 */
+  datasourceEnabled: boolean
+  /** 远端表分块拉取的行数。 */
+  datasourceFetchBatchSize: number
+  /** 连接 / 连通性测试的超时毫秒数。 */
+  datasourceConnectTimeoutMs: number
+  /** 单次导入的行数上限，0 表示不限。 */
+  datasourceMaxImportRows: number
+  /** 数据源密码的加密密钥；空 → 环境变量 LH_DATA_ENCRYPT_KEY。 */
+  datasourceEncryptKey: string
 }
 
 export type DatasetStatus = 'importing' | 'ready' | 'failed'
@@ -66,6 +79,10 @@ export interface DatasetRecord {
   name: string
   tableName: string
   sourcePath: string | null
+  /** 来自数据源时记录数据源 id；文件导入为 null。 */
+  sourceId: string | null
+  /** 来自数据源时的定位串 `<schema>.<table>`（脱敏，不含凭据）。 */
+  sourceRef: string | null
   /** 用户可编辑的说明（设置页「改描述」的落点）；未填为 null。 */
   description: string | null
   rowCount: number
@@ -135,6 +152,8 @@ CREATE INDEX IF NOT EXISTS idx_datasets_scope_created ON datasets(scope_key, cre
  */
 const MIGRATION_SQL: readonly string[] = [
   'ALTER TABLE datasets ADD COLUMN description TEXT',
+  'ALTER TABLE datasets ADD COLUMN source_id TEXT',
+  'ALTER TABLE datasets ADD COLUMN source_ref TEXT',
 ]
 
 /** 迁移失败即停：只放过「列已存在」，其余（权限、磁盘）必须暴露。 */
@@ -162,6 +181,8 @@ function rowToRecord(row: Row): DatasetRecord {
     name: String(row.name),
     tableName: String(row.table_name),
     sourcePath: row.source_path === null || row.source_path === undefined ? null : String(row.source_path),
+    sourceId: row.source_id === null || row.source_id === undefined ? null : String(row.source_id),
+    sourceRef: row.source_ref === null || row.source_ref === undefined ? null : String(row.source_ref),
     description: row.description === null || row.description === undefined ? null : String(row.description),
     rowCount: Number(row.row_count ?? 0),
     columns,
@@ -249,8 +270,8 @@ export class DatasetStore {
     await this.scopes.record(record.scopeKey)
     await db
       .prepare(
-        `INSERT INTO datasets (id, scope_key, name, table_name, source_path, description, row_count, columns, status, error, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO datasets (id, scope_key, name, table_name, source_path, source_id, source_ref, description, row_count, columns, status, error, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         record.id,
@@ -258,6 +279,8 @@ export class DatasetStore {
         record.name,
         record.tableName,
         record.sourcePath,
+        record.sourceId,
+        record.sourceRef,
         record.description,
         record.rowCount,
         JSON.stringify(record.columns),
@@ -269,7 +292,7 @@ export class DatasetStore {
   }
 
   async update(scopeKey: string, id: string, patch: Partial<Pick<DatasetRecord,
-    'name' | 'rowCount' | 'columns' | 'status' | 'error' | 'sourcePath' | 'description'>>): Promise<void> {
+    'name' | 'rowCount' | 'columns' | 'status' | 'error' | 'sourcePath' | 'sourceId' | 'sourceRef' | 'description'>>): Promise<void> {
     const db = await this.database(scopeKey)
     const assignments: string[] = ['updated_at = ?']
     const params: unknown[] = [Date.now()]
@@ -296,6 +319,14 @@ export class DatasetStore {
     if (patch.sourcePath !== undefined) {
       assignments.push('source_path = ?')
       params.push(patch.sourcePath)
+    }
+    if (patch.sourceId !== undefined) {
+      assignments.push('source_id = ?')
+      params.push(patch.sourceId)
+    }
+    if (patch.sourceRef !== undefined) {
+      assignments.push('source_ref = ?')
+      params.push(patch.sourceRef)
     }
     if (patch.description !== undefined) {
       assignments.push('description = ?')
@@ -347,6 +378,8 @@ export interface ConnectionLike {
 export interface DataServices {
   cfg: DataConfig
   store: DatasetStore
+  /** 数据源登记表（catalog 库，全局共享）。 */
+  sources: DataSourceStore
   /** 解析一次调用的工作区；拿不到会话 cwd 时会 reject（`ScopeError`）。 */
   scopeOf(exec: ToolExec): Promise<ScopeContext>
   /** 可选：`ctx.jobs` 不可用时后台导入降级为前台执行。 */

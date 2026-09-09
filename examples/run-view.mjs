@@ -163,7 +163,8 @@ apply(ctx, validateConfig({
 }))
 
 section('装载')
-check('工具已注册', ctx.toolsByName.size === 8, `实际 ${ctx.toolsByName.size}`)
+// 8 个 dataset_* + 4 个 datasource_*（数据源默认启用）。
+check('工具已注册', ctx.toolsByName.size === 12, `实际 ${ctx.toolsByName.size}`)
 check('视图路由已挂载', [...ctx.routes.keys()].includes('/api/lh-data/views'), [...ctx.routes.keys()].join(','))
 
 const imported = await call(ctx, 'dataset_import', { path: 'big.csv' })

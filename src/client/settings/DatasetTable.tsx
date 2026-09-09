@@ -9,7 +9,7 @@ import { c, s, STATUS_COLOR } from './styles'
 
 const STATUS_TEXT: Record<string, string> = { ready: '就绪', importing: '导入中', failed: '失败' }
 
-function fmtAgo(ts: number): string {
+export function fmtAgo(ts: number): string {
   if (!Number.isFinite(ts) || ts <= 0) return '—'
   const diff = Date.now() - ts
   if (diff < 60_000) return '刚刚'

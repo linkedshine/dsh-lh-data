@@ -11,6 +11,16 @@
  *   PATCH  /datasets/:id?scope=    改名 / 改描述 / 改来源
  *   DELETE /datasets/:id?scope=    连同物理表与元数据删除
  *
+ * 数据源（datasourceEnabled=false 时整组不注册）：
+ *   GET    /sources                数据源列表（脱敏，不含密码）
+ *   POST   /sources                新建数据源（body.test=true 时先测连）
+ *   POST   /sources/test           测试连接（已登记的 source，或未保存的完整参数）
+ *   GET    /sources/:id            单条详情
+ *   PATCH  /sources/:id            改连接参数 / 密码 / 名称 / 描述
+ *   DELETE /sources/:id            删除数据源
+ *   GET    /sources/:id/tables?schema=&q=   浏览远端表
+ *   POST   /sources/:id/import     把远端表导入指定工作区
+ *
  * scope 一律由写操作的调用方从「已知工作区列表」里回传，不接收任意路径输入。
  */
 
@@ -18,12 +28,20 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { ADMIN_API_BASE, type CreateDatasetRequest, type PatchDatasetRequest } from './admin-contract'
 import {
   createDataset,
+  createDataSource,
   deleteDataset,
+  deleteDataSource,
   getDataset,
+  getDataSource,
+  importSourceTable,
   listDatasetRows,
   listDatasets,
+  listDataSources,
   listScopes,
+  listSourceTables,
   patchDataset,
+  patchDataSource,
+  testDataSource,
   AdminServiceError,
 } from './admin'
 import { AdminValidationError } from './admin-validate'
@@ -37,7 +55,10 @@ import {
   type RouteResponse,
 } from './http-common'
 
-type Resource = { kind: 'scopes' } | { kind: 'datasets'; id?: string; rows?: boolean }
+type Resource =
+  | { kind: 'scopes' }
+  | { kind: 'datasets'; id?: string; rows?: boolean }
+  | { kind: 'sources'; id?: string; action?: 'test' | 'tables' | 'import' }
 
 /** `/api/lh-data/admin` 之后的路径解析。 */
 function parseAdminPath(pathname: string): Resource | undefined {
@@ -45,7 +66,17 @@ function parseAdminPath(pathname: string): Resource | undefined {
   const rest = pathname.slice(base.length).replace(/^\/+/, '').replace(/\/+$/, '')
   if (rest === '' || rest === 'scopes') return { kind: 'scopes' }
   if (rest === 'datasets') return { kind: 'datasets' }
+  if (rest === 'sources') return { kind: 'sources' }
+  // `sources/test` 必须优先于 `:id` 匹配，否则会被当成 id=test 的数据源。
+  if (rest === 'sources/test') return { kind: 'sources', action: 'test' }
   const parts = rest.split('/')
+  if (parts[0] === 'sources' && parts[1] !== undefined && parts[1].length > 0) {
+    const id = decodeURIComponent(parts[1])
+    if (parts.length === 2) return { kind: 'sources', id }
+    if (parts.length === 3 && parts[2] === 'tables') return { kind: 'sources', id, action: 'tables' }
+    if (parts.length === 3 && parts[2] === 'import') return { kind: 'sources', id, action: 'import' }
+    return undefined
+  }
   if (parts[0] === 'datasets' && parts[1] !== undefined && parts[1].length > 0) {
     const id = decodeURIComponent(parts[1])
     // `/datasets/:id/rows` —— 表数据分页；更深或别的子路径一律不认（404）。
@@ -102,6 +133,63 @@ export function registerAdminRoutes(services: DataServices): (() => void) | unde
         }
         const scopes = await listScopes(services)
         sendJson(response, 200, { scopes })
+        return
+      }
+
+      if (resource.kind === 'sources') {
+        if (resource.action === 'test') {
+          if (method !== 'POST') {
+            methodNotAllowed(response)
+            return
+          }
+          const body = await readJsonBody(request, services.cfg.adminMaxBodyBytes)
+          sendJson(response, 200, await testDataSource(services, body))
+          return
+        }
+        if (resource.id === undefined) {
+          if (method === 'GET') {
+            sendJson(response, 200, { sources: await listDataSources(services) })
+            return
+          }
+          if (method === 'POST') {
+            const body = await readJsonBody(request, services.cfg.adminMaxBodyBytes)
+            sendJson(response, 201, await createDataSource(services, body))
+            return
+          }
+          methodNotAllowed(response)
+          return
+        }
+        if (resource.action === 'tables') {
+          if (method !== 'GET') {
+            methodNotAllowed(response)
+            return
+          }
+          sendJson(response, 200, await listSourceTables(services, resource.id, Object.fromEntries(params)))
+          return
+        }
+        if (resource.action === 'import') {
+          if (method !== 'POST') {
+            methodNotAllowed(response)
+            return
+          }
+          const body = await readJsonBody(request, services.cfg.adminMaxBodyBytes)
+          sendJson(response, 201, await importSourceTable(services, resource.id, body))
+          return
+        }
+        if (method === 'GET') {
+          sendJson(response, 200, await getDataSource(services, resource.id))
+          return
+        }
+        if (method === 'PATCH') {
+          const body = await readJsonBody(request, services.cfg.adminMaxBodyBytes)
+          sendJson(response, 200, await patchDataSource(services, resource.id, body))
+          return
+        }
+        if (method === 'DELETE') {
+          sendJson(response, 200, await deleteDataSource(services, resource.id))
+          return
+        }
+        methodNotAllowed(response)
         return
       }
 
