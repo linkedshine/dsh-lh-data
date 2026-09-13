@@ -3,7 +3,7 @@
 
 ---
 
-Hi all 👋 —— 分享一个刚做完的社区插件：**[dsh-lh-data](https://github.com/linkedshine/dsh-lh-data)**。
+Hi all 👋 —— 分享一个刚做完的DSH插件：**[dsh-lh-data](https://github.com/linkedshine/dsh-lh-data)**。
 
 一句话概括：它把「工作区里的 Excel / CSV」和「远程 MySQL / PostgreSQL 的表」导入本地 Turso（libSQL），然后交给模型一组**句柄化的 `dataset_*` 工具**做增删改查；人这一侧还有浏览器「设置 → 数据集」的可视化管理页。
 
@@ -82,6 +82,16 @@ npx @deepseek-ai/dsh plugin --profile web remove dsh-lh-data
 >
 > 整条链路走完，模型手里握着的仍然只有 `datasetId` —— 不知道库名、不知道实例地址、更不知道密码。（导入是全量拉表，所以真要「最近三个月」，是先落库再用 `dataset_query` 过滤；嫌大可以设 `datasourceMaxImportRows` 夹上限。）
 
+### 实际会话效果
+
+下面是在 DSH 对话里直接操作 `user` 数据集的几张截图：修改昵称、删除记录、完整还原。
+
+![修改用户昵称](./assets/chat-update-nickname.png)
+
+![删除记录](./assets/chat-delete-restore.png)
+
+![还原记录时的思考与数据回溯](./assets/chat-restore-thinking.png)
+
 ---
 
 ## 四、几个值得说一说的设计取舍
@@ -147,6 +157,12 @@ HTTP 接口**不接受任何 SQL**（语句由主机侧 `ViewRegistry` 持有）
 
 管理接口固定挂在 `/api/lh-data/admin`（`adminEnabled=false` 时不注册），每个请求同样先过 Host/Origin 围栏与浏览器鉴权；错误响应脱敏，不回显 SQL、物理表名与密码。`scope` 只能由调用方从「已知工作区列表」回传，**不接受任意路径**。
 
+设置页截图：
+
+![数据集列表页](./assets/settings-dataset-list.png)
+
+![数据集详情与列结构](./assets/settings-dataset-detail.png)
+
 > 列结构对应物理表 DDL，**创建后不可改** —— 这也是刻意的：宁可让你重建一个数据集，也不要在 agent 可能正在读的表上做 `ALTER TABLE`。
 
 ---
@@ -182,8 +198,6 @@ pnpm run datasource # 加解密 / 列映射 / 装载门禁 / 数据源 CRUD / �
 另外，如果你的团队在用成本/性能观测类工具链（比如社区里的 Langfuse 遥测后端，见 #1007）：`dataset_query` 的「预览 + 摘要 + 视图」正是为了压单次会话的 token 消耗设计的 —— 很想知道你们那边实测的上下文节省量。
 
 ---
-
-设计文档也在仓库里：`docs/excel-to-turso-skill设计.md`（数据层 / 工具集 / 作用域与安全）、`docs/查询结果视图与前端分页设计.md`（视图协议与前端卡片）、`docs/设置页数据集管理设计.md`（管理接口与双半身契约）。
 
 Feedback、issues、PRs welcome！
 

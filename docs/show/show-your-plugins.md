@@ -182,8 +182,6 @@ Also, if your team is using cost/performance observability toolchains (such as t
 
 ---
 
-Design docs are also in the repo: `docs/excel-to-turso-skill设计.md` (data layer / toolset / scope & security), `docs/查询结果视图与前端分页设计.md` (view protocol & frontend card), `docs/设置页数据集管理设计.md` (management interface & dual-identity contract).
-
 Feedback, issues, and PRs welcome!
 
 - Repo: <https://github.com/linkedshine/dsh-lh-data>
