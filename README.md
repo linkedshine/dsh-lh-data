@@ -1,58 +1,57 @@
 # dsh-lh-data
 
-dsh（deepseek-harness）插件：把工作区内的 Excel / CSV 导入本地 Turso（libSQL），并以**句柄化的 `dataset_*` 工具**做增删改查。
+A [dsh](https://github.com/deepseek-ai) (deepseek-harness) plugin that imports Excel / CSV files from the workspace into a local Turso (libSQL) database and exposes CRUD operations through **handle-based `dataset_*` tools**.
 
-核心设计：**物理表名从不外泄**。模型侧只见 `datasetId` / 登记名 / 业务列名（保留中文表头）；查询只拿「少量预览行 + 全量统计摘要」，完整结果由**前端表格卡片按 `viewId` 分页拉取**。
-
----
-
-## 特性
-
-- **8 个 `dataset_*` 工具**：导入、列表、列信息、查询、插入、更新、删除、删表。
-- **4 个 `datasource_*` 工具**：登记 MySQL / PostgreSQL 连接、测试连通、浏览远端表、把远端表全量导入成数据集；导入产出的数据集与文件导入完全同权。
-- **句柄化**：SQL 里的物理表名由插件持有与替换，模型与 HTTP 响应中都不可见。
-- **结果视图**：大结果集自动建视图，模型只拿片段，前端卡片翻页 / 排序 / 导出 CSV；视图持久化，重启后仍可翻页。
-- **工作区隔离**：数据集按会话 cwd（或 WorkspaceId）分 scope，导入文件必须落在工作区内（禁止 `../` 穿越）。
-- **写操作 fail-closed**：`tools/pre-execute` 门禁 + 单调守卫 + 只读模式三重保护。
-- **只读 SQL 校验**：原始 SQL 仅允许单条 `SELECT` / `WITH` / `EXPLAIN`，表引用白名单，无 DDL / 写关键字。
-- **设置页**：浏览器「设置 → 数据集」内分「数据集 / 数据源」两个页签，可聚合查看、新建空表、改描述、分页看数据、删除；数据源页签支持登记连接、测试连通、浏览远端表并一键导入。
-- **可选依赖降级**：`jobs` / `systemPrompt` / `webServer` / `connection` 任一缺失都只降级对应能力，不影响装载；`mysql2` / `pg` 已随插件**默认安装**，但仍走动态加载——只用文件导入时不会拖慢启动，万一运行环境缺包也给明确安装提示而非抛裸栈。
+Core design: **physical table names never leak**. The model only sees `datasetId` / registered name / business column names (Chinese headers are preserved); queries return only a "small preview slice + full aggregate summary", while the complete result is paginated by the **front-end table card via `viewId`**.
 
 ---
 
-## 常用命令
+## Features
 
-### 编译
+- **8 `dataset_*` tools**: import, list, column info, query, insert, update, delete, drop.
+- **4 `datasource_*` tools**: register MySQL / PostgreSQL connections, test connectivity, browse remote tables, and bulk-import a remote table as a dataset; datasets produced this way are fully equal in rights to file-imported ones.
+- **Handle-based**: physical table names are held and rewritten by the plugin — invisible in both the model side and HTTP responses.
+- **Result views**: large result sets automatically build a view; the model gets only a fragment, while the front-end card paginates / sorts / exports CSV; the view is persisted, so paging still works after a restart.
+- **Workspace isolation**: datasets are scoped by session cwd (or WorkspaceId); imported files must land inside the workspace (no `../` traversal).
+- **Fail-closed writes**: a triple guard of `tools/pre-execute` gate + monotonic guard + read-only mode.
+- **Read-only SQL validation**: raw SQL only permits a single `SELECT` / `WITH` / `EXPLAIN`, with a table-reference allow-list and no DDL / write keywords.
+- **Settings page**: under the browser "Settings → Datasets" there are two tabs ("Datasets" / "Data Sources") — aggregate view, create empty tables, edit descriptions, paginate data, and delete; the data-source tab supports registering connections, testing connectivity, browsing remote tables, and one-click import.
+- **Optional-dependency degradation**: missing `jobs` / `systemPrompt` / `webServer` / `connection` only degrades the corresponding capability, never blocks loading; `mysql2` / `pg` are **installed by default** with the plugin, but still loaded dynamically — file-only import won't slow startup, and if a driver is missing at runtime you get a clear install hint rather than a bare stack trace.
+
+---
+
+## Common Commands
+
+### Build
 
 ```
 pnpm run build
 ```
 
-产物两个半身（由 `tsdown` 并行构建，共用 `lib/`）：
+Two halves of output (built in parallel by `tsdown`, sharing `lib/`):
 
-| 产物 | 格式 | 入口 | 说明 |
+| Artifact | Format | Entry | Description |
 | --- | --- | --- | --- |
-| `lib/index.js` | ESM | `src/index.ts` | 主机半身，cordis 插件 |
-| `lib/client.js` | CJS 工厂 | `src/client/index.ts` | 浏览器半身，注册到 `window.__ModuleLoader__` |
+| `lib/index.js` | ESM | `src/index.ts` | Host half, cordis plugin |
+| `lib/client.js` | CJS factory | `src/client/index.ts` | Browser half, registered to `window.__ModuleLoader__` |
 
-### 类型检查
+### Type check
 
 ```
-pnpm run typecheck          # 主机 + 客户端
-pnpm run typecheck:host     # 仅主机
-pnpm run typecheck:client   # 仅客户端
+pnpm run typecheck          # host + client
+pnpm run typecheck:host     # host only
+pnpm run typecheck:client   # client only
 ```
 
-### 启动 web 服务
+### Start web service
 
 ```
 npx @deepseek-ai/dsh web
 ```
 
-### 安装插件
+### Install plugin
 
-
-本地源码
+Local source
 ```
 npx @deepseek-ai/dsh plugin --profile web add D:\fastwork\projects\node\dsh-lh-data
 ```
@@ -61,272 +60,273 @@ github
 ```
 npx @deepseek-ai/dsh plugin --profile web add https://github.com/linkedshine/dsh-lh-data.git
 ```
-中央仓库
+
+central registry
 ```
 npx @deepseek-ai/dsh plugin --profile web add dsh-lh-data
 ```
 
-删除：
+remove:
 
 ```
 npx @deepseek-ai/dsh plugin --profile web remove dsh-lh-data
 ```
 
-插件通过 `cordis.patch.yml` 注入默认配置（`dbPath` 留空、`requireApprovalForWrites: false`）。
+The plugin injects default config via `cordis.patch.yml` (`dbPath` empty, `requireApprovalForWrites: false`).
 
-### 验证脚本（需先 build）
+### Validation scripts (build first)
 
 ```
-pnpm run import   # examples/run-import.mjs：单元校验 + 导入 → list → schema → query → 写操作 → 门禁 → 生命周期
-pnpm run view     # examples/run-view.mjs  ：大结果集 → 片段 → 前端分页 → 鉴权 / 持久化恢复 / 降级
-pnpm run admin    # examples/run-admin.mjs ：聚合列表 / 新建空表 / 改名改描述 / 删除 / 分页看数据
-pnpm run datasource  # examples/run-datasource.mjs：加解密 / 列映射 / 装载门禁 / 数据源 CRUD / 脱敏 / 鉴权 / 降级
+pnpm run import   # examples/run-import.mjs: unit checks + import → list → schema → query → writes → gate → lifecycle
+pnpm run view     # examples/run-view.mjs  : large result set → fragment → front-end paging → auth / persistence restore / degradation
+pnpm run admin    # examples/run-admin.mjs : aggregate list / create empty table / rename & edit description / delete / paginate data
+pnpm run datasource  # examples/run-datasource.mjs: encrypt/decrypt / column mapping / load gate / datasource CRUD / masking / auth / degradation
 ```
 
-`mysql2` / `pg` 已随插件默认安装，`pnpm install` 后即可连接数据库。想跑真实的端到端导入验证：把脚本顶部的 `DEMO` 改成你的库，再 `node examples/run-datasource.mjs --live`。
+`mysql2` / `pg` are installed by default with the plugin; after `pnpm install` you can connect to databases. To run a real end-to-end import test: change `DEMO` at the top of the script to your database, then `node examples/run-datasource.mjs --live`.
 
-连接失败（端口未开放、主机不可达、账号密码错误、库不存在等）时，工具与设置页统一返回**可读的中文原因**（如「连接被拒绝（主机可达，但端口未开放或服务未启动）」），不会把驱动的裸栈抛给模型或浏览器；驱动确实缺失时仍给 `pnpm add mysql2` / `pnpm add pg` 提示。
+On connection failure (port closed, host unreachable, wrong credentials, missing database, etc.), the tools and settings page uniformly return a **readable cause in Chinese** (e.g. "connection refused (host reachable, but port not open or service not started)") instead of bubbling the driver's bare stack to the model or browser; if a driver is genuinely missing you still get `pnpm add mysql2` / `pnpm add pg` hints.
 
 ---
 
-## 工具一览
+## Tool Reference
 
-| 工具 | 类型 | 主要参数 | 返回要点 |
+| Tool | Type | Main params | Returns |
 | --- | --- | --- | --- |
-| `dataset_list` | 读 | — | `datasets[]`：`datasetId`、`name`、行数、列数、`status`、`sourcePath`、时间 |
-| `dataset_schema` | 读 | `dataset` | 列名（原始表头）、`sanitizedName`、推断类型、可空、样例值、说明 |
-| `dataset_query` | 读 | `dataset`、`columns`、`where`、`orderBy`、`limit`、`offset`、`sql` | `matchedRows` / `totalRows`、`preview`（少量预览行）、`summary`（列统计）、可选 `view` |
-| `dataset_import` | 写 | `path`、`name?`、`sheet?`、`limit?`、`background?` | `datasetId`、行列数、`status: ready \| running`、`jobId?`、列信息 |
-| `dataset_insert` | 写 | `dataset`、`rows[]` | `inserted`、最新 `rowCount` |
-| `dataset_update` | 写 | `dataset`、`rowId`、`data` | `updated`、`changedColumns[]` |
-| `dataset_delete` | 写 | `dataset`、`rowId` | `deleted`、剩余 `rowCount` |
-| `dataset_drop` | 写 | `dataset` | `dropped`（连同物理表与元数据删除，不可恢复） |
-| `datasource_list` | 读 | — | `sources[]`：`id`、`name`、`type`、`host`、`port`、`database`、`status`、`lastError`、`lastCheckedAt`（不含密码） |
-| `datasource_test` | 读 | `source` | `success` / `latency` / `version` / `error` |
-| `datasource_tables` | 读 | `source`、`schema?`、`q?` | `tables[]`：表名 / schema / 估计行数 / 列结构（列名 / 推断类型 / 可空 / 注释） |
-| `datasource_import` | 写 | `source`、`table`、`schema?`、`name?`、`limit?` | `datasetId`、行列数、`status: ready \| running`、`jobId?` |
+| `dataset_list` | read | — | `datasets[]`: `datasetId`, `name`, rows, cols, `status`, `sourcePath`, timestamps |
+| `dataset_schema` | read | `dataset` | column names (original headers), `sanitizedName`, inferred type, nullable, sample value, description |
+| `dataset_query` | read | `dataset`, `columns`, `where`, `orderBy`, `limit`, `offset`, `sql` | `matchedRows` / `totalRows`, `preview` (few preview rows), `summary` (column stats), optional `view` |
+| `dataset_import` | write | `path`, `name?`, `sheet?`, `limit?`, `background?` | `datasetId`, rows/cols, `status: ready \| running`, `jobId?`, column info |
+| `dataset_insert` | write | `dataset`, `rows[]` | `inserted`, latest `rowCount` |
+| `dataset_update` | write | `dataset`, `rowId`, `data` | `updated`, `changedColumns[]` |
+| `dataset_delete` | write | `dataset`, `rowId` | `deleted`, remaining `rowCount` |
+| `dataset_drop` | write | `dataset` | `dropped` (drops physical table and metadata together, unrecoverable) |
+| `datasource_list` | read | — | `sources[]`: `id`, `name`, `type`, `host`, `port`, `database`, `status`, `lastError`, `lastCheckedAt` (no password) |
+| `datasource_test` | read | `source` | `success` / `latency` / `version` / `error` |
+| `datasource_tables` | read | `source`, `schema?`, `q?` | `tables[]`: table name / schema / estimated rows / column structure (name / inferred type / nullable / comment) |
+| `datasource_import` | write | `source`, `table`, `schema?`, `name?`, `limit?` | `datasetId`, rows/cols, `status: ready \| running`, `jobId?` |
 
-要点：
+Notes:
 
-- `datasource_*` 的连接密码在**任何**工具描述、返回值、HTTP 响应、日志与错误文本里都不回显，只暴露「是否设置了密码」。
-- `datasource_import` 加入写门禁；`readOnly=true` 或 `datasourceEnabled=false` 时直接拒绝；导入产出的数据集落在**当前会话工作区**，之后一律用 `dataset_*` 工具操作。
-- 驱动（`mysql2` / `pg`）未安装时，`datasource_test` / `datasource_tables` / `datasource_import` 返回可读错误并提示 `pnpm add mysql2`（或 `pg`），不抛裸栈。
+- `datasource_*` connection passwords are never echoed in **any** tool description, return value, HTTP response, log, or error text — only "whether a password is set" is exposed.
+- `datasource_import` goes through the write gate; it is rejected outright when `readOnly=true` or `datasourceEnabled=false`; the resulting dataset lands in the **current session workspace**, and is thereafter operated on only via `dataset_*` tools.
+- When the driver (`mysql2` / `pg`) is not installed, `datasource_test` / `datasource_tables` / `datasource_import` return a readable error with a `pnpm add mysql2` (or `pg`) hint, no bare stack.
 
-- `dataset` 一律传 **datasetId 或登记名**，不要猜物理表名。
-- 查询优先用结构化参数；只有需要聚合 / 连接时才传 `sql`，用保留别名 `ds` 指代数据集，例如：
+- Always pass `dataset` as a **datasetId or registered name** — never guess the physical table name.
+- Prefer structured params for queries; only pass `sql` when you need aggregation / joins, using the reserved alias `ds` for the dataset, e.g.:
   ```sql
   SELECT 状态, COUNT(*) AS c FROM ds GROUP BY 状态
   ```
-- 系统列 `_row_id`（自增主键）会随结果返回，是 `update` / `delete` 的定位键；`_uploaded_at` 由系统维护。两者都不能写入。
-- 5 个写工具（`dataset_import` / `_insert` / `_update` / `_delete` / `_drop`）默认触发人工确认；`readOnly=true` 时直接 deny。
+- The system column `_row_id` (auto-increment primary key) is returned with results and is the locator key for `update` / `delete`; `_uploaded_at` is maintained by the system. Neither can be written.
+- The 5 write tools (`dataset_import` / `_insert` / `_update` / `_delete` / `_drop`) trigger human confirmation by default; they are denied when `readOnly=true`.
 
 ---
 
-## 数据模型
+## Data Model
 
-### 元数据表 `datasets`（插件自有，每个 scope 库一份）
+### Metadata table `datasets` (owned by the plugin, one per scope db)
 
-| 列 | 说明 |
+| Column | Description |
 | --- | --- |
-| `id` | `ds_<ts36><rand>`，对外的 datasetId |
-| `scope_key` | 归属键（cwd 规范化路径，或 `ws:<id>`） |
-| `name` | 登记名，`(scope_key, name)` 唯一 |
-| `table_name` | 物理表名，形如 `d_<scopeHash8>_<base40>_<ts36>`，只由插件持有 |
-| `source_path` / `description` / `row_count` / `columns` / `status` / `error` / `created_at` / `updated_at` | 元数据 |
+| `id` | `ds_<ts36><rand>`, the external datasetId |
+| `scope_key` | owning key (normalized cwd path, or `ws:<id>`) |
+| `name` | registered name, unique on `(scope_key, name)` |
+| `table_name` | physical table name, like `d_<scopeHash8>_<base40>_<ts36>`, held only by the plugin |
+| `source_path` / `description` / `row_count` / `columns` / `status` / `error` / `created_at` / `updated_at` | metadata |
 
-`status`：`importing` → `ready` / `failed`。导入失败会删掉半截物理表并标记 `failed`，非 `ready` 数据集会被拒绝读写。
+`status`: `importing` → `ready` / `failed`. A failed import deletes the half-built physical table and marks `failed`; a non-`ready` dataset is rejected for read/write.
 
-来自数据源的数据集会在 `source_id` / `source_ref` 两列留下定位信息（`source_ref` 形如 `schema.table` 或 `table`，脱敏、不含凭据）；`source_path` 同时写成 `db:<数据源名>`，因此 `dataset_list` 与设置页搜索零改动即可按数据源名检索。
+Datasets from a data source leave location info in the `source_id` / `source_ref` columns (`source_ref` is like `schema.table` or `table`, masked, no credentials); `source_path` is also written as `db:<data source name>`, so `dataset_list` and the settings page can search by data-source name with zero changes.
 
-### 数据源登记表 `lh_data_sources`（catalog 库，全局共享）
+### Data-source registry table `lh_data_sources` (catalog db, shared globally)
 
-数据源连接配置与数据集**不在同一个库**：数据源存 catalog 库（与 `dataset_scopes` 同级），跨工作区共享；导入产出的数据集仍落在各 scope 业务库。
+The data-source connection config and datasets are **not in the same db**: data sources are stored in the catalog db (sibling to `dataset_scopes`), shared across workspaces; imported datasets still land in each scope's business db.
 
-| 列 | 说明 |
+| Column | Description |
 | --- | --- |
-| `id` | `dsrc_<ts36><rand>`，对外的 sourceId |
-| `name` | 登记名，全局唯一 |
-| `type` / `host` / `port` / `database` / `username` | 连接参数 |
-| `password_enc` | AES-256-GCM 密文（`iv:authTag:encrypted`），密钥取自 `datasourceEncryptKey` → `LH_DATA_ENCRYPT_KEY` → 内置默认；**永不回显** |
-| `ssl_mode` / `pool_max` / `description` | 可选连接参数与说明 |
-| `status` | `unknown` / `connected` / `error`，最近一次测试结论 |
-| `last_error` / `last_checked_at` | 最近一次测试的脱敏错误与时间戳 |
-| `created_at` / `updated_at` | 元数据 |
+| `id` | `dsrc_<ts36><rand>`, the external sourceId |
+| `name` | registered name, globally unique |
+| `type` / `host` / `port` / `database` / `username` | connection params |
+| `password_enc` | AES-256-GCM ciphertext (`iv:authTag:encrypted`), key from `datasourceEncryptKey` → `LH_DATA_ENCRYPT_KEY` → built-in default; **never echoed** |
+| `ssl_mode` / `pool_max` / `description` | optional connection params and description |
+| `status` | `unknown` / `connected` / `error`, conclusion of the last test |
+| `last_error` / `last_checked_at` | masked error and timestamp of the last test |
+| `created_at` / `updated_at` | metadata |
 
-### 物理表
+### Physical table
 
 ```sql
 CREATE TABLE <table_name> (
   _row_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  "<业务列>" <REAL | INTEGER | TEXT>,   -- 列名保留原始表头（含中文），SQL 中双引号包裹
+  "<business column>" <REAL | INTEGER | TEXT>,   -- column name preserves original header (incl. Chinese), double-quoted in SQL
   _uploaded_at INTEGER DEFAULT (strftime('%s','now'))
 );
 ```
 
-类型映射：`numeric → REAL`、`boolean → INTEGER`、`date / text → TEXT`。写入时按列类型强制转换（布尔→0/1、数值→Number、日期→ISO、对象/数组→JSON）。
+Type mapping: `numeric → REAL`, `boolean → INTEGER`, `date / text → TEXT`. On write, values are coerced by column type (bool→0/1, number→Number, date→ISO, object/array→JSON).
 
-### 列名与类型推断
+### Column names and type inference
 
-- 列名**保留原名**（含中文）；空列名回落 `column`；重名追加 `_2` / `_3`（SQL 用 `sanitizedName`）。
-- 类型推断（列名优先级最高，采样默认前 100 行）：
-  1. 编码 / 号码类列名 → `text`（中文「编码/编号/代码/代号/账号/证件号/邮编/区号/电话/手机」，英文 `code` / `sku` / `ean` / `upc` / `isbn` / `issn` / `postal` / `zip` / `phone` / `tel` / `mobile`）；
-  2. 13 位以上整数或 `1.78E+12` 类科学计数法 → `text`（防精度丢失）；
-  3. 数值占比 > 80% → `numeric`；布尔占比 > 90% → `boolean`；日期正则占比 > 70% → `date`；
-  4. 其余 → `text`。
+- Column names **preserve the original name** (incl. Chinese); empty names fall back to `column`; duplicates get `_2` / `_3` appended (SQL uses `sanitizedName`).
+- Type inference (column name has highest priority, sampling defaults to first 100 rows):
+  1. Code / number-like column names → `text` (Chinese 「编码/编号/代码/代号/账号/证件号/邮编/区号/电话/手机」, English `code` / `sku` / `ean` / `upc` / `isbn` / `issn` / `postal` / `zip` / `phone` / `tel` / `mobile`);
+  2. Integers of 13+ digits or scientific notation like `1.78E+12` → `text` (prevent precision loss);
+  3. Numeric ratio > 80% → `numeric`; boolean ratio > 90% → `boolean`; date-regex ratio > 70% → `date`;
+  4. Otherwise → `text`.
 
-### 库位置
+### DB location
 
-连接优先级：`dbUrl` > `dbPath` > `SQLITE_PATH` > `TURSO_DATABASE_URL` > 默认 `$DSH_HOME/lh-data/data.db`（`DSH_HOME` 未设时回落 `~/.dsh`）。启动 PRAGMA：`journal_mode=WAL`、`foreign_keys=ON`。
-
----
-
-## 结果视图与前端分页
-
-模型调用 `dataset_query` 时：
-
-1. `viewMode=auto` 下，命中行数 > `viewThresholdRows`（默认 20）或片段字节 > `viewThresholdBytes`（默认 4KB）才建视图；`always` / `never` 强制开关。
-2. 建视图后，模型只拿到 `previewRows`（默认 5）行预览 + 全表聚合的 `summary`；`viewId` / `endpoint` 经 **`presentationMeta`** 传给前端（模型不可见）。
-3. 前端卡片（`src/client/index.ts`）接管 `tool.call.toolview` 上 key = `dataset_query` 的渲染位，按 `viewId` 分页拉取：翻页、点表头排序、导出 CSV。
-4. 视图元数据持久化到 `lh_views`（与 `datasets` 同库同 scope），重启后预载恢复；翻页行数据实时查询原表，因此卡片常驻「数据可能已发生变化」提示。
-
-### 视图路由（`viewRoutePrefix` 可配，默认 `/api/lh-data`）
-
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| `GET` | `{prefix}/views/:viewId` | 视图元信息（列、总行数、分页上限、可排序列） |
-| `GET` | `{prefix}/views/:viewId/rows?page=&pageSize=&sort=&order=` | 取一页数据 |
-| `DELETE` | `{prefix}/views/:viewId` | 释放视图 |
-
-接口**不接受任何 SQL**（语句由主机侧 `ViewRegistry` 持有），每个请求先过 `connection.requestRejection()`（Host/Origin 围栏 + 浏览器鉴权）。无 `webServer` / `connection`（CLI / TUI 剖面）时自动降级为纯文本片段。
+Connection priority: `dbUrl` > `dbPath` > `SQLITE_PATH` > `TURSO_DATABASE_URL` > default `$DSH_HOME/lh-data/data.db` (falls back to `~/.dsh` when `DSH_HOME` is unset). Startup PRAGMA: `journal_mode=WAL`, `foreign_keys=ON`.
 
 ---
 
-## 设置页管理接口
+## Result Views and Front-end Paging
 
-固定挂在 `/api/lh-data/admin`（不受 `viewRoutePrefix` 影响），`adminEnabled=false` 时不注册。
+When the model calls `dataset_query`:
 
-| 方法 | 路径 | 说明 |
+1. Under `viewMode=auto`, a view is built only when matched rows > `viewThresholdRows` (default 20) or fragment bytes > `viewThresholdBytes` (default 4KB); `always` / `never` force the switch.
+2. After building the view, the model gets only `previewRows` (default 5) preview rows + full-table aggregate `summary`; the `viewId` / `endpoint` are passed to the front-end via **`presentationMeta`** (invisible to the model).
+3. The front-end card (`src/client/index.ts`) takes over the render slot keyed `dataset_query` on `tool.call.toolview`, paginating by `viewId`: page, click header to sort, export CSV.
+4. View metadata is persisted to `lh_views` (same db and scope as `datasets`), preloaded and restored after restart; paged row data is queried from the original table in real time, so the card keeps a "data may have changed" hint.
+
+### View routes (`viewRoutePrefix` configurable, default `/api/lh-data`)
+
+| Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/scopes` | 已知工作区列表 |
-| `GET` | `/datasets?q=&page=&pageSize=` | 跨工作区聚合列表（超 `adminMaxDatasets` 截断并提示） |
-| `POST` | `/datasets` | 新建空数据集（body 含 `scopeKey` 与列定义） |
-| `GET` | `/datasets/:id?scope=` | 单条详情（含只读列结构） |
-| `GET` | `/datasets/:id/rows?scope=&page=&pageSize=` | 分页查看表数据（只读） |
-| `PATCH` | `/datasets/:id?scope=` | 改名 / 改描述 / 改来源 / 改列说明与样例 |
-| `DELETE` | `/datasets/:id?scope=` | 连同物理表与元数据删除 |
-| `GET` | `/sources` | 数据源列表（脱敏，不含密码） |
-| `POST` | `/sources` | 新建数据源（`test:true` 时先测连，不通不落库） |
-| `POST` | `/sources/test` | 测试连接（body 可含未保存的连接参数） |
-| `GET` | `/sources/:id` | 单条详情（不含密码） |
-| `PATCH` | `/sources/:id` | 改连接参数 / 改密码 / 改名改描述 |
-| `DELETE` | `/sources/:id` | 删除数据源 |
-| `GET` | `/sources/:id/tables?schema=&q=` | 列远端表（含 schema / 估计行数 / 列结构） |
-| `POST` | `/sources/:id/import` | 把远端表导入指定工作区（`body.scopeKey` + 表名） |
+| `GET` | `{prefix}/views/:viewId` | view metadata (columns, total rows, page limit, sortable columns) |
+| `GET` | `{prefix}/views/:viewId/rows?page=&pageSize=&sort=&order=` | fetch one page of data |
+| `DELETE` | `{prefix}/views/:viewId` | release the view |
 
-约束：列名 / 类型 / 可空性对应物理表 DDL，创建后**不可改**；`scope` 由调用方从「已知工作区列表」回传，不接收任意路径。错误响应脱敏，不回显 SQL 与物理表名，数据源接口也绝不回显密码。
-
-错误码：`UNAUTHORIZED` / `FORBIDDEN` / `NOT_FOUND` / `METHOD_NOT_ALLOWED` / `BAD_REQUEST` / `PAYLOAD_TOO_LARGE` / `READ_ONLY` / `ADMIN_DISABLED` / `SCOPE_UNKNOWN` / `DUPLICATE_NAME` / `INVALID_COLUMNS` / `QUERY_FAILED` / `SOURCE_DISABLED`（datasourceEnabled=false）/ `DRIVER_MISSING`（驱动未安装）/ `SOURCE_UNREACHABLE`（连接失败）/ `IMPORT_FAILED`（导入异常）。
-
-浏览器侧在「设置 → 数据集」（`ADMIN_SECTION_ID = lh-data`，order 100）注册分区，组件见 `src/client/settings/`。
+The endpoints **accept no SQL** (statements are held by the host-side `ViewRegistry`); every request passes `connection.requestRejection()` first (Host/Origin fence + browser auth). Without `webServer` / `connection` (CLI / TUI profile) it auto-degrades to a plain-text fragment.
 
 ---
 
-## 配置
+## Settings Page Admin API
 
-在 `cordis.patch.yml` 或 dsh 插件配置中设置（`Config` schema 是默认值唯一真源）：
+Fixed under `/api/lh-data/admin` (not affected by `viewRoutePrefix`); not registered when `adminEnabled=false`.
 
-### 存储
-
-| 键 | 默认 | 说明 |
+| Method | Path | Description |
 | --- | --- | --- |
-| `dbPath` | `''` | libSQL 库路径；空 → `$DSH_HOME/lh-data/data.db` |
-| `dbUrl` | `''` | 非空则覆盖 `dbPath`，可为 `file:` 或 `libsql://`（远程 Turso） |
-| `authToken` | `''` | 远程 token；建议留空走 `TURSO_AUTH_TOKEN` |
-| `perWorkspace` | `false` | scope 用 WorkspaceId 且每个工作区独立库文件 |
+| `GET` | `/scopes` | known workspace list |
+| `GET` | `/datasets?q=&page=&pageSize=` | cross-workspace aggregate list (truncated and hinted beyond `adminMaxDatasets`) |
+| `POST` | `/datasets` | create empty dataset (body has `scopeKey` and column definitions) |
+| `GET` | `/datasets/:id?scope=` | single detail (incl. read-only column structure) |
+| `GET` | `/datasets/:id/rows?scope=&page=&pageSize=` | paginate table data (read-only) |
+| `PATCH` | `/datasets/:id?scope=` | rename / edit description / edit source / edit column description & samples |
+| `DELETE` | `/datasets/:id?scope=` | delete along with physical table and metadata |
+| `GET` | `/sources` | data-source list (masked, no password) |
+| `POST` | `/sources` | create data source (`test:true` tests first, won't persist if unreachable) |
+| `POST` | `/sources/test` | test connection (body may carry unsaved connection params) |
+| `GET` | `/sources/:id` | single detail (no password) |
+| `PATCH` | `/sources/:id` | edit connection params / password / name & description |
+| `DELETE` | `/sources/:id` | delete the data source |
+| `GET` | `/sources/:id/tables?schema=&q=` | list remote tables (incl. schema / estimated rows / column structure) |
+| `POST` | `/sources/:id/import` | import a remote table into a specified workspace (`body.scopeKey` + table name) |
 
-### 安全
+Constraints: column name / type / nullability correspond to the physical-table DDL and are **immutable** after creation; `scope` is echoed back by the caller from the "known workspace list" — no arbitrary paths accepted. Error responses are masked, never echo SQL or physical table names, and data-source endpoints never echo passwords either.
 
-| 键 | 默认 | 说明 |
+Error codes: `UNAUTHORIZED` / `FORBIDDEN` / `NOT_FOUND` / `METHOD_NOT_ALLOWED` / `BAD_REQUEST` / `PAYLOAD_TOO_LARGE` / `READ_ONLY` / `ADMIN_DISABLED` / `SCOPE_UNKNOWN` / `DUPLICATE_NAME` / `INVALID_COLUMNS` / `QUERY_FAILED` / `SOURCE_DISABLED` (datasourceEnabled=false) / `DRIVER_MISSING` (driver not installed) / `SOURCE_UNREACHABLE` (connection failed) / `IMPORT_FAILED` (import exception).
+
+The browser registers a section under "Settings → Datasets" (`ADMIN_SECTION_ID = lh-data`, order 100); components live in `src/client/settings/`.
+
+---
+
+## Configuration
+
+Set in `cordis.patch.yml` or the dsh plugin config (the `Config` schema is the single source of truth for defaults):
+
+### Storage
+
+| Key | Default | Description |
 | --- | --- | --- |
-| `requireApprovalForWrites` | `true` | 写工具走人工确认（无审批通道即拒绝） |
-| `readOnly` | `false` | 只读模式，写工具直接 deny |
-| `allowRawSql` | `true` | 关闭后 `dataset_query` 仅接受结构化参数 |
-| `maxFileBytes` | `209715200` | 单个导入文件字节上限 |
-| `maxInsertRows` | `500` | `dataset_insert` 单次行数上限 |
-| `maxQueryRows` | `200` | `dataset_query` 可服务行数上限 |
-| `batchSize` / `backgroundThresholdRows` | `100` / `20000` | 插入批大小 / 超过该行数自动转后台导入 |
-| `previewSampleRows` | `100` | 类型推断采样行数 |
+| `dbPath` | `''` | libSQL db path; empty → `$DSH_HOME/lh-data/data.db` |
+| `dbUrl` | `''` | non-empty overrides `dbPath`; may be `file:` or `libsql://` (remote Turso) |
+| `authToken` | `''` | remote token; leave empty to use `TURSO_AUTH_TOKEN` |
+| `perWorkspace` | `false` | scope uses WorkspaceId and a separate db file per workspace |
 
-### 结果视图与预览
+### Security
 
-| 键 | 默认 | 说明 |
+| Key | Default | Description |
+| --- | --- | --- |
+| `requireApprovalForWrites` | `true` | write tools go through human confirmation (rejected without an approval channel) |
+| `readOnly` | `false` | read-only mode, write tools denied outright |
+| `allowRawSql` | `true` | when off, `dataset_query` only accepts structured params |
+| `maxFileBytes` | `209715200` | per-import file byte limit |
+| `maxInsertRows` | `500` | `dataset_insert` row limit per call |
+| `maxQueryRows` | `200` | `dataset_query` servable row limit |
+| `batchSize` / `backgroundThresholdRows` | `100` / `20000` | insert batch size / auto background import beyond this row count |
+| `previewSampleRows` | `100` | type-inference sampling rows |
+
+### Result views and preview
+
+| Key | Default | Description |
 | --- | --- | --- |
 | `viewMode` | `auto` | `auto` / `always` / `never` |
-| `viewThresholdRows` / `viewThresholdBytes` | `20` / `4096` | `auto` 模式的建视图阈值 |
-| `previewRows` / `previewStrategy` | `5` / `head` | 预览行数；`head` 或 `head-tail` |
-| `previewCellChars` / `previewColumns` | `40` / `12` | 单元格截断长度 / 展示列数上限 |
-| `summaryEnabled` | `true` | 是否生成列统计摘要 |
-| `summaryMaxColumns` / `summaryMaxTextColumns` | `24` / `3` | 参与摘要的列数 / 取值分布的文本列数上限 |
-| `defaultPageSize` / `maxPageSize` / `maxViewRows` | `100` / `500` / `50000` | 前端首页行数 / 单页上限 / 单视图可翻到的最大行数 |
-| `viewRoutePrefix` | `/api/lh-data` | 前端分页接口路由前缀 |
+| `viewThresholdRows` / `viewThresholdBytes` | `20` / `4096` | view-build thresholds for `auto` mode |
+| `previewRows` / `previewStrategy` | `5` / `head` | preview row count; `head` or `head-tail` |
+| `previewCellChars` / `previewColumns` | `40` / `12` | cell truncation length / display column cap |
+| `summaryEnabled` | `true` | whether to generate column stats summary |
+| `summaryMaxColumns` / `summaryMaxTextColumns` | `24` / `3` | columns in summary / text columns with value distribution cap |
+| `defaultPageSize` / `maxPageSize` / `maxViewRows` | `100` / `500` / `50000` | front-end first-page rows / per-page cap / max rows paginable per view |
+| `viewRoutePrefix` | `/api/lh-data` | front-end paging route prefix |
 
-### 设置页
+### Settings page
 
-| 键 | 默认 | 说明 |
+| Key | Default | Description |
 | --- | --- | --- |
-| `adminEnabled` | `true` | 是否挂载管理接口 |
-| `adminMaxBodyBytes` | `65536` | 请求体字节上限 |
-| `adminMaxDatasets` | `500` | 聚合列表扫描上限 |
+| `adminEnabled` | `true` | whether to mount the admin API |
+| `adminMaxBodyBytes` | `65536` | request body byte limit |
+| `adminMaxDatasets` | `500` | aggregate list scan cap |
 
-### 数据源（关系型数据库）
+### Data sources (relational databases)
 
-| 键 | 默认 | 说明 |
+| Key | Default | Description |
 | --- | --- | --- |
-| `datasourceEnabled` | `true` | 总开关；`false` 时不注册 `datasource_*` 工具与 `/sources` 接口 |
-| `datasourceFetchBatchSize` | `1000` | 远端表分块拉取的行数 |
-| `datasourceConnectTimeoutMs` | `10000` | 连接 / 连通性测试的超时毫秒数 |
-| `datasourceMaxImportRows` | `0` | 单次从远端表导入的行数上限，`0` 表示不限 |
-| `datasourceEncryptKey` | `''` | 数据源密码的加密密钥；留空则回落到环境变量 `LH_DATA_ENCRYPT_KEY`，再空用内置默认并告警（生产不安全） |
+| `datasourceEnabled` | `true` | master switch; `false` means `datasource_*` tools and `/sources` endpoints are not registered |
+| `datasourceFetchBatchSize` | `1000` | rows pulled per chunk from a remote table |
+| `datasourceConnectTimeoutMs` | `10000` | connection / connectivity-test timeout in ms |
+| `datasourceMaxImportRows` | `0` | max rows imported from a remote table per call, `0` = unlimited |
+| `datasourceEncryptKey` | `''` | encryption key for data-source passwords; empty falls back to env `LH_DATA_ENCRYPT_KEY`, then built-in default with a warning (unsafe for production) |
 
 ---
 
-## 作用域与安全
+## Scope and Security
 
-- **scope 解析**：默认取 `exec.agent.session.header.cwd`（兼容扁平 `session.cwd`），经 `realpath` 规范化后作为 `scopeKey`；`perWorkspace=true` 时提升为 `ws:<WorkspaceId>`。拿不到会话 cwd 时 **fail-loud 报错**，绝不静默回落 `process.cwd()`。
-- **路径围栏**：导入文件解析后必须落在 scope 目录内，扩展名白名单 `.xlsx` / `.xls` / `.csv`。
-- **SQL 校验**：剥离注释与字符串字面量后检测多语句与写关键字；表引用必须在白名单内；单条 `SELECT` / `WITH` / `EXPLAIN`，超长（> 8000 字符）拒绝。
-- **写门禁**：`tools/pre-execute` 对写工具返回 `ask`；`ctx.tools.guard()` 单调守卫，写工具缺 `dataset`（导入缺 `path`）一律拒绝；`readOnly` 下 deny。
-- **句柄化**：物理表名只出现在 `store.ts` / `view.ts` 内部，工具描述、返回值、HTTP 响应、错误文本都不含。
+- **scope resolution**: by default takes `exec.agent.session.header.cwd` (compat with flat `session.cwd`), normalized via `realpath` as `scopeKey`; when `perWorkspace=true` it is promoted to `ws:<WorkspaceId>`. When the session cwd can't be obtained it **fails loud**, never silently falling back to `process.cwd()`.
+- **path fence**: resolved import files must land inside the scope directory; extension allow-list `.xlsx` / `.xls` / `.csv`.
+- **SQL validation**: after stripping comments and string literals, detect multi-statements and write keywords; table references must be in the allow-list; single `SELECT` / `WITH` / `EXPLAIN`, rejects if too long (> 8000 chars).
+- **write gate**: `tools/pre-execute` returns `ask` for write tools; `ctx.tools.guard()` monotonic guard, write tools missing `dataset` (import missing `path`) are rejected outright; denied under `readOnly`.
+- **handle-based**: physical table names appear only inside `store.ts` / `view.ts`; tool descriptions, return values, HTTP responses, and error text contain none.
 
 ---
 
-## 目录结构
+## Directory Structure
 
 ```
 src/
-  index.ts            插件入口：name / inject / Config / apply，门禁与生命周期
-  tooling.ts          工具定义适配器（零 dsh 运行时依赖）：toolDef、参数校验、ToolError
-  db.ts               libSQL 客户端与生命周期、PRAGMA、JSON 规整、库 URL 解析
-  store.ts            datasets 元数据层、物理表名生成、归属断言
-  table.ts            物理表建/插/改/删，按列类型转换
-  sql.ts              只读校验器、结构化查询拼装、标识符引号化
-  parse.ts            XLSX / CSV 解析、列名消毒与类型推断
-  preview.ts          模型可见片段（预览行 + 全表列统计）
-  render.ts           纯函数文本渲染（列表 / 列 / 行 / 查询预览）
-  view.ts             结果视图注册中心（持久化到 lh_views）
-  scope.ts            scope 解析与路径围栏
-  scope-registry.ts   scope 注册表
-  http.ts             视图分页路由
-  http-common.ts      鉴权、请求体、响应公共逻辑
-  admin*.ts           设置页服务层 / 路由 / 校验 / 双半身契约
-  tools/              registry（12 工具聚合）、import、read、write、datasource
-  datasource/         数据源模块：types / crypto / columns / driver / connector（mysql|pg）/ connection / source-sql / source-store / importer
-  client/             浏览器半身：查询结果卡片 + 设置页分区（DatasetsPanel / DataSourcesPanel / DataSourceForm / SourceTablesPanel）
-docs/                 设计文档
-examples/             四个自包含验证脚本（构造最小假 ctx 跑通全链路）
+  index.ts            plugin entry: name / inject / Config / apply, gate and lifecycle
+  tooling.ts          tool definition adapter (zero dsh runtime deps): toolDef, param validation, ToolError
+  db.ts               libSQL client and lifecycle, PRAGMA, JSON normalization, db URL parsing
+  store.ts            datasets metadata layer, physical table name generation, ownership assertion
+  table.ts            physical table create/insert/update/delete, typed conversion
+  sql.ts              read-only validator, structured query assembly, identifier quoting
+  parse.ts            XLSX / CSV parsing, column-name sanitization and type inference
+  preview.ts          model-visible fragment (preview rows + full-table column stats)
+  render.ts           pure-function text rendering (list / columns / rows / query preview)
+  view.ts             result view registry (persisted to lh_views)
+  scope.ts            scope resolution and path fence
+  scope-registry.ts   scope registry
+  http.ts             view paging routes
+  http-common.ts     auth, request body, response common logic
+  admin*.ts           settings page service layer / routes / validation / dual-half contract
+  tools/              registry (12 tools aggregate), import, read, write, datasource
+  datasource/         data-source module: types / crypto / columns / driver / connector (mysql|pg) / connection / source-sql / source-store / importer
+  client/             browser half: query-result card + settings page section (DatasetsPanel / DataSourcesPanel / DataSourceForm / SourceTablesPanel)
+docs/                 design docs
+examples/             four self-contained validation scripts (construct a minimal fake ctx to run the full chain)
 ```
 
-## 设计文档
+## Design Docs
 
-- `docs/excel-to-turso-skill设计.md` —— 数据层、工具集、作用域与安全设计
-- `docs/查询结果视图与前端分页设计.md` —— 结果视图、分页协议与前端卡片
+- `docs/excel-to-turso-skill设计.md` —— data layer, toolset, scope and security design
+- `docs/查询结果视图与前端分页设计.md` —— result views, paging protocol, and front-end card
