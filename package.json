@@ -23,7 +23,7 @@
   "scripts": {
     "prebuild": "node -e \"require('node:fs').rmSync('lib', { recursive: true, force: true })\"",
     "build": "tsdown",
-    "prepare": "tsdown",
+    "prepublishOnly": "pnpm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "typecheck:host": "tsc -p tsconfig.json --noEmit",
     "typecheck:client": "tsc -p tsconfig.client.json --noEmit",
