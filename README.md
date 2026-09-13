@@ -61,6 +61,10 @@ github
 ```
 npx @deepseek-ai/dsh plugin --profile web add https://github.com/linkedshine/dsh-lh-data.git
 ```
+中央仓库
+```
+npx @deepseek-ai/dsh plugin --profile web add dsh-lh-data
+```
 
 删除：
 
