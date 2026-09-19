@@ -1,3 +1,24 @@
+<!--
+发布时从下面 3 组「标题 + 开头」里三选一，删除其余两组与这段注释即可。
+现有正文标题（"dsh-lh-data：让 agent 安全地把表格当数据库用…"）可作为第 4 个备选保留。
+-->
+
+## 备选标题与开头（三选一）
+
+**A. 痛点钩子型**
+> **标题：** 别再把整个 CSV 喂给模型了：这个插件让 agent 把表格当数据库用
+> **开头：** 你有没有试过让 agent 处理几万行的 Excel？上下文瞬间被吃满、每次提问重读一遍、结果还无法复核…… **[dsh-lh-data](https://github.com/linkedshine/dsh-lh-data)** 换个思路：把表导入本地 libSQL，交给模型一组「句柄化」工具——物理表名、连接串、密码它一个都看不到。
+
+**B. 安全钩子型**
+> **标题：** 让 agent 能碰生产库，但不给它数据库密码：dsh-lh-data 的句柄化思路
+> **开头：** 让模型直连生产库写 SQL 是高危操作，但完全不让它碰数据又干不了活。 **[dsh-lh-data](https://github.com/linkedshine/dsh-lh-data)** 取了个中道——给模型一个「数据句柄层」而非数据库连接：它只知道 `datasetId`，凭据加密落库永不回显，写操作默认 fail-closed。
+
+**C. 能力钩子型**
+> **标题：** 12 个工具、零必填配置：给 agent 配一个安全的「表格数据库工作台」
+> **开头：** 分享一个刚做完的 DSH 插件 **[dsh-lh-data](https://github.com/linkedshine/dsh-lh-data)**。Excel / CSV 和远程 MySQL / PostgreSQL 一键导入本地 libSQL，模型用 `dataset_*` 工具做增删改查，人用浏览器「设置 → 数据集」可视化管理。装完即用，全量数据不进上下文。
+
+---
+
 # dsh-lh-data：让 agent 安全地把表格当数据库用（Excel / CSV / MySQL / PostgreSQL → 本地 libSQL）
 
 
@@ -6,6 +27,8 @@
 Hi all 👋 —— 分享一个刚做完的DSH插件：**[dsh-lh-data](https://github.com/linkedshine/dsh-lh-data)**。
 
 一句话概括：它把「工作区里的 Excel / CSV」和「远程 MySQL / PostgreSQL 的表」导入本地 Turso（libSQL），然后交给模型一组**句柄化的 `dataset_*` 工具**做增删改查；人这一侧还有浏览器「设置 → 数据集」的可视化管理页。
+
+![dsh-lh-data 架构总览：数据源 → 句柄层 → 本地 libSQL，模型侧只读句柄、人类侧可视化管理](./assets/architecture-overview.svg)
 
 ---
 

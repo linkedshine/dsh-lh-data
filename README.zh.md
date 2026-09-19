@@ -1,4 +1,5 @@
 # dsh-lh-data
+> [项目github地址](https://github.com/linkedshine/dsh-lh-data)
 
 dsh（deepseek-harness）插件：把工作区内的 Excel / CSV 导入本地 Turso（libSQL），并以**句柄化的 `dataset_*` 工具**做增删改查。
 

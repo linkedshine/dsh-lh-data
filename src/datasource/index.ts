@@ -60,3 +60,12 @@ export {
   type RemoteImportParams,
   type RemoteImportResult,
 } from './importer'
+
+// 导出（本地数据集 → 远端数据源）
+export {
+  exportDatasetsToSource,
+  type ExportDatasetOutcome,
+  type ExportItemRef,
+  type ExportToSourceOutcome,
+  type ExportToSourceParams,
+} from './uploader'

@@ -5,6 +5,7 @@
  * 标识符引号化与类型映射由各子类实现，基类不写任何方言分支。
  */
 
+import type { ColumnType } from '../../parse'
 import type {
   ConnectionConfig,
   ConnectionTestResult,
@@ -34,9 +35,21 @@ export abstract class DatabaseConnector {
   abstract getTableColumns(tableName: string, schemaName?: string): Promise<RemoteColumn[]>
   abstract getTableData(tableName: string, schemaName?: string, range?: FetchRange): Promise<Record<string, unknown>[]>
 
+  // ── 写能力（把本地数据集推到远端） ───────────────────────────────────────
+
+  /** 执行写语句（建表 / 插数 / 删表），忽略返回行。 */
+  abstract run(sql: string, params?: unknown[]): Promise<void>
+
+  /** 把本地列类型映射成本方言的建表类型（text/numeric/boolean/date）。 */
+  abstract nativeType(type: ColumnType): string
+
+  /** 第 `index` 个（0 基）参数占位符：MySQL 为 `?`，PG 为 `$n`。 */
+  abstract placeholder(index: number): string
+
   // ── 方言相关的标识符引号化 ─────────────────────────────────────────────────
 
-  protected abstract quoteIdent(name: string): string
+  /** 标识符引号化（表名 / 列名 / schema），沿用各子类转义规则，供上传编排拼接 SQL。 */
+  abstract quoteIdent(name: string): string
 
   protected tableRef(tableName: string, schemaName?: string | null): string {
     const schema = schemaName === undefined || schemaName === null ? '' : schemaName.trim()

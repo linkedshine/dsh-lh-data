@@ -30,18 +30,22 @@ export interface DatasetTableProps {
   total: number
   selectedId: string | null
   loading: boolean
+  selectedIds: Set<string>
   onSelect: (item: DatasetAdminView) => void
+  onToggleSelect: (id: string) => void
+  onToggleAll: () => void
   onPageChange: (page: number) => void
 }
 
 export function DatasetTable(props: DatasetTableProps): ReactElement {
-  const { items, page, pageSize, total, selectedId, loading, onSelect, onPageChange } = props
+  const { items, page, pageSize, total, selectedId, loading, selectedIds, onSelect, onToggleSelect, onToggleAll, onPageChange } = props
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const allSelected = items.length > 0 && items.every(item => selectedIds.has(item.id))
 
   const rows = items.length === 0 && !loading
     ? (
       <tr>
-        <td style={{ ...s.td, color: c.fg2, padding: '18px 8px', textAlign: 'center' }} colSpan={7}>
+        <td style={{ ...s.td, color: c.fg2, padding: '18px 8px', textAlign: 'center' }} colSpan={8}>
           还没有数据集，用 agent 的 dataset_import 导入，或直接点击「新建数据集」
         </td>
       </tr>
@@ -49,9 +53,20 @@ export function DatasetTable(props: DatasetTableProps): ReactElement {
     : items.map(item => (
       <tr
         key={`${item.scopeKey}:${item.id}`}
-        style={{ ...s.row, ...(item.id === selectedId ? s.selectedRow : null) }}
+        style={{
+          ...s.row,
+          ...(item.id === selectedId ? s.selectedRow : null),
+          ...(selectedIds.has(item.id) ? { background: c.subtle } : null),
+        }}
         onClick={() => onSelect(item)}
       >
+        <td style={{ ...s.td, textAlign: 'center', width: 32 }} onClick={event => event.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={selectedIds.has(item.id)}
+            onChange={() => onToggleSelect(item.id)}
+          />
+        </td>
         <td style={s.td} title={item.name}>{ellipsis(item.name, 40)}</td>
         <td style={s.td} title={item.scopeKey}>{ellipsis(item.scopeKey, 36)}</td>
         <td style={s.td}>{item.rowCount}</td>
@@ -71,6 +86,9 @@ export function DatasetTable(props: DatasetTableProps): ReactElement {
         <table style={s.table}>
           <thead>
             <tr>
+              <th style={{ ...s.th, textAlign: 'center', width: 32 }}>
+                <input type="checkbox" checked={allSelected} onChange={onToggleAll} />
+              </th>
               <th style={s.th}>名称</th>
               <th style={s.th}>工作区</th>
               <th style={s.th}>行数</th>

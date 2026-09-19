@@ -96,6 +96,36 @@ export const s = {
     cursor: 'pointer', transition: 'color 120ms ease, border-color 120ms ease',
   },
   activeTab: { color: c.fg, borderBottom: `2px solid ${c.primary}` },
+  // ── 上传弹窗 ─────────────────────────────────────────────────────────────
+  modalOverlay: {
+    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 16,
+  },
+  modal: {
+    background: c.bg, border: `1px solid ${c.border}`, borderRadius: 8,
+    boxShadow: '0 8px 24px rgba(0,0,0,0.18)', width: '100%', maxWidth: 460,
+    maxHeight: '85vh', overflow: 'auto', padding: 16, color: c.fg,
+  },
+  modalTitle: { fontSize: 14, fontWeight: 600 },
+  modalClose: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: c.fg2, lineHeight: 1 },
+  modalFoot: { display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 },
+  selectedList: {
+    margin: '8px 0 0', padding: '6px 8px', maxHeight: 132, overflow: 'auto',
+    border: `1px solid ${c.border}`, borderRadius: 6, background: c.subtle, fontSize: 12,
+  },
+  resultList: { margin: '8px 0 0', padding: 0, listStyle: 'none', fontSize: 12 },
+  resultItem: {
+    display: 'flex', justifyContent: 'space-between', gap: 8, padding: '4px 0',
+    borderBottom: `1px dashed ${c.border}`,
+  },
+  confirmBanner: {
+    marginBottom: 10, padding: '8px 10px', borderRadius: 6, fontSize: 12, lineHeight: 1.5,
+    border: `1px solid ${c.warn}`, color: c.warn, background: 'rgba(154,103,0,0.08)',
+  },
+  okBanner: {
+    marginBottom: 10, padding: '8px 10px', borderRadius: 6, fontSize: 12,
+    border: `1px solid ${c.ok}`, color: c.ok, background: 'rgba(26,127,55,0.08)',
+  },
 } as const
 
 /** 状态圆点配色（数据集）。 */

@@ -313,6 +313,40 @@ export interface ImportSourceTableResult {
   jobId?: string
 }
 
+// ── 数据集导出到数据源 ───────────────────────────────────────────────────────
+
+/** 导出请求里指向某一个数据集的引用（datasetId + 所属工作区）。 */
+export interface ExportDatasetRef {
+  id: string
+  scopeKey: string
+  /** 远端表名；缺省时取数据集显示名。改名后同名即视为冲突。 */
+  tableName?: string | null
+}
+
+export interface ExportDatasetsRequest {
+  datasets: ExportDatasetRef[]
+  /** 目标 schema（PostgreSQL 用；MySQL 忽略，固定写已配置的库）。 */
+  schemaName?: string | null
+  /** 同名表是否覆盖（DROP 后重建）。默认 false：有冲突时整体拒绝并列出冲突表名。 */
+  overwrite?: boolean
+}
+
+export interface ExportDatasetResult {
+  id: string
+  name: string
+  remoteTable: string
+  rowCount: number
+  columnCount: number
+  status: 'ok' | 'failed'
+  error?: string
+}
+
+export interface ExportDatasetsResult {
+  /** 有同名表且未确认覆盖时的冲突表名列表（用于前端提示）。 */
+  conflicts: string[]
+  results: ExportDatasetResult[]
+}
+
 /** 字段缺省表示不改动。 */
 export interface PatchDatasetRequest {
   name?: string

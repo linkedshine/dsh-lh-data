@@ -391,3 +391,43 @@ function validateDatasetNameSafe(value: unknown): string | null {
   if (value === undefined || value === null) return null
   return validateDatasetName(value)
 }
+
+export interface ParsedExportRequest {
+  datasets: { id: string; scopeKey: string; tableName: string | null }[]
+  schemaName: string | null
+  overwrite: boolean
+}
+
+/**
+ * 校验「数据集 → 数据源」导出请求：datasets 非空数组，每项含 id 与 scopeKey，
+ * tableName 可选（远端表名，缺省取数据集名），schemaName 可选，overwrite 布尔默认 false。
+ */
+export function parseExportRequest(raw: unknown): ParsedExportRequest {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new AdminValidationError('BAD_REQUEST', '请求体必须是对象')
+  }
+  const body = raw as Record<string, unknown>
+  if (!Array.isArray(body.datasets) || body.datasets.length === 0) {
+    throw new AdminValidationError('BAD_REQUEST', 'datasets 不能为空')
+  }
+  if (body.datasets.length > 100) {
+    throw new AdminValidationError('BAD_REQUEST', '单次最多导出 100 个数据集')
+  }
+  const datasets = body.datasets.map((item, index) => {
+    if (typeof item !== 'object' || item === null) {
+      throw new AdminValidationError('BAD_REQUEST', `第 ${index + 1} 个数据集格式错误`)
+    }
+    const entry = item as Record<string, unknown>
+    return {
+      id: requireText(entry.id, 128, `第 ${index + 1} 个数据集的 id`),
+      scopeKey: validateScopeKey(entry.scopeKey),
+      tableName: validateOptionalText(entry.tableName, ADMIN_MAX_DATABASE_LENGTH, '目标表名'),
+    }
+  })
+  const overwrite = typeof body.overwrite === 'boolean' ? body.overwrite : false
+  return {
+    datasets,
+    schemaName: validateOptionalText(body.schemaName, ADMIN_MAX_DATABASE_LENGTH, 'schema'),
+    overwrite,
+  }
+}

@@ -1,5 +1,7 @@
 # dsh-lh-data
 
+> [github project link](https://github.com/linkedshine/dsh-lh-data)
+
 A [dsh](https://github.com/deepseek-ai) (deepseek-harness) plugin that imports Excel / CSV files from the workspace into a local Turso (libSQL) database and exposes CRUD operations through **handle-based `dataset_*` tools**.
 
 Core design: **physical table names never leak**. The model only sees `datasetId` / registered name / business column names (Chinese headers are preserved); queries return only a "small preview slice + full aggregate summary", while the complete result is paginated by the **front-end table card via `viewId`**.

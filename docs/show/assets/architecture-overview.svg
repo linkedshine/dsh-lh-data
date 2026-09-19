@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="540" viewBox="0 0 900 540" font-family="-apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#eef2f7"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+    <marker id="arrowB" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#2563eb"/>
+    </marker>
+    <style>
+      .t { font-weight:700; }
+      .s { font-size:13px; fill:#475569; }
+      .b { font-size:13px; font-weight:600; }
+    </style>
+  </defs>
+
+  <rect width="900" height="540" fill="url(#bg)"/>
+
+  <!-- Title -->
+  <text x="40" y="44" class="t" font-size="20" fill="#0f172a">dsh-lh-data：把「表」变成模型够得着的「句柄」</text>
+  <text x="40" y="66" class="s">Excel / CSV / MySQL / PostgreSQL  →  本地 libSQL  →  句柄化 dataset_* 工具</text>
+
+  <!-- ============ Left: data sources ============ -->
+  <rect x="40" y="100" width="170" height="200" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="125" y="124" text-anchor="middle" class="t" font-size="15" fill="#0f172a">数据源</text>
+  <rect x="62" y="140" width="126" height="40" rx="8" fill="#e0f2fe" stroke="#7dd3fc"/>
+  <text x="125" y="165" text-anchor="middle" class="b" fill="#075985">Excel / CSV</text>
+  <rect x="62" y="190" width="126" height="40" rx="8" fill="#e0f2fe" stroke="#7dd3fc"/>
+  <text x="125" y="215" text-anchor="middle" class="b" fill="#075985">MySQL</text>
+  <rect x="62" y="240" width="126" height="40" rx="8" fill="#e0f2fe" stroke="#7dd3fc"/>
+  <text x="125" y="265" text-anchor="middle" class="b" fill="#075985">PostgreSQL</text>
+  <text x="125" y="288" text-anchor="middle" class="s" font-size="11">凭据加密落库</text>
+
+  <!-- arrow sources -> core -->
+  <path d="M210,200 L348,200" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <text x="280" y="192" text-anchor="middle" class="s" font-size="11">import</text>
+
+  <!-- ============ Middle: core plugin ============ -->
+  <rect x="350" y="100" width="200" height="200" rx="14" fill="#1e293b" stroke="#0f172a" stroke-width="1.5"/>
+  <text x="450" y="128" text-anchor="middle" class="t" font-size="16" fill="#f8fafc">dsh-lh-data</text>
+  <rect x="372" y="142" width="156" height="46" rx="8" fill="#334155"/>
+  <text x="450" y="165" text-anchor="middle" class="b" fill="#e2e8f0">句柄层 (handle)</text>
+  <text x="450" y="182" text-anchor="middle" class="s" font-size="11" fill="#94a3b8">datasetId 映射</text>
+  <rect x="372" y="198" width="156" height="46" rx="8" fill="#334155"/>
+  <text x="450" y="221" text-anchor="middle" class="b" fill="#e2e8f0">本地 libSQL</text>
+  <text x="450" y="238" text-anchor="middle" class="s" font-size="11" fill="#94a3b8">Turso / 物理表</text>
+  <rect x="372" y="254" width="156" height="34" rx="8" fill="#1d4ed8"/>
+  <text x="450" y="276" text-anchor="middle" class="s" font-size="11" fill="#dbeafe">物理表名：插件私有</text>
+
+  <!-- ============ Right top: model ============ -->
+  <rect x="600" y="100" width="260" height="96" rx="12" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="730" y="124" text-anchor="middle" class="t" font-size="15" fill="#1d4ed8">模型 / Agent</text>
+  <text x="618" y="148" class="s" font-size="12">· dataset_* 句柄化工具</text>
+  <text x="618" y="168" class="s" font-size="12">· 仅 datasetId + 5 行预览</text>
+  <text x="618" y="188" class="s" font-size="12">· 全量统计摘要 (summary)</text>
+
+  <!-- arrow core -> model -->
+  <path d="M550,150 L598,150" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#arrowB)"/>
+  <text x="575" y="142" text-anchor="middle" class="s" font-size="10" fill="#2563eb">只读</text>
+
+  <!-- ============ Right bottom: human ============ -->
+  <rect x="600" y="214" width="260" height="96" rx="12" fill="#ffffff" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="730" y="238" text-anchor="middle" class="t" font-size="15" fill="#15803d">人类 / 你</text>
+  <text x="618" y="262" class="s" font-size="12">· 设置 → 数据集 可视化管理</text>
+  <text x="618" y="282" class="s" font-size="12">· 前端表格卡片 viewId 分页</text>
+  <text x="618" y="302" class="s" font-size="12">· 排序 / 导出 CSV</text>
+
+  <!-- arrow core -> human -->
+  <path d="M550,264 L598,264" stroke="#16a34a" stroke-width="2" fill="none" marker-end="url(#arrowB)"/>
+  <text x="575" y="256" text-anchor="middle" class="s" font-size="10" fill="#16a34a">可视</text>
+
+  <!-- ============ Protection strip ============ -->
+  <text x="40" y="356" class="t" font-size="14" fill="#0f172a">三重保护</text>
+  <rect x="40" y="368" width="260" height="56" rx="10" fill="#fff7ed" stroke="#fdba74"/>
+  <text x="58" y="392" class="b" fill="#c2410c">写操作 fail-closed</text>
+  <text x="58" y="412" class="s" font-size="11">无审批通道 = 拒绝</text>
+
+  <rect x="320" y="368" width="260" height="56" rx="10" fill="#fff7ed" stroke="#fdba74"/>
+  <text x="338" y="392" class="b" fill="#c2410c">凭据 AES-256-GCM</text>
+  <text x="338" y="412" class="s" font-size="11">加密落库，永不回显明文</text>
+
+  <rect x="600" y="368" width="260" height="56" rx="10" fill="#fff7ed" stroke="#fdba74"/>
+  <text x="618" y="392" class="b" fill="#c2410c">SQL 注入面收敛</text>
+  <text x="618" y="412" class="s" font-size="11">剥离注释/字面量，白名单校验</text>
+
+  <!-- caption -->
+  <text x="40" y="470" class="s" font-size="12" fill="#64748b">模型永远拿不到物理表名、连接串与密码 —— 它手里只有 datasetId 这个「数据句柄」。</text>
+  <text x="40" y="492" class="s" font-size="12" fill="#64748b">完整结果由前端按 viewId 分页拉取，片段给模型、全量给眼睛。</text>
+</svg>

@@ -15,6 +15,9 @@ import {
   type DatasetAdminView,
   type DatasetDetailView,
   type DatasetRowsResult,
+  type ExportDatasetResult,
+  type ExportDatasetsRequest,
+  type ExportDatasetsResult,
   type ImportSourceTableRequest,
   type ImportSourceTableResult,
   type ListDatasetsResult,
@@ -151,4 +154,9 @@ export function listSourceTables(id: string, schema?: string, query?: string): P
 
 export function importSourceTable(id: string, body: ImportSourceTableRequest): Promise<ImportSourceTableResult> {
   return request(`/sources/${encodeURIComponent(id)}/import`, { method: 'POST', body: JSON.stringify(body) })
+}
+
+/** 把选中的数据集批量导出到指定数据源；同名表冲突且未覆盖时抛 DUPLICATE_NAME（409）。 */
+export function exportDatasets(id: string, body: ExportDatasetsRequest): Promise<ExportDatasetsResult> {
+  return request(`/sources/${encodeURIComponent(id)}/export`, { method: 'POST', body: JSON.stringify(body) })
 }

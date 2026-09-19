@@ -20,6 +20,7 @@
  *   DELETE /sources/:id            删除数据源
  *   GET    /sources/:id/tables?schema=&q=   浏览远端表
  *   POST   /sources/:id/import     把远端表导入指定工作区
+ *   POST   /sources/:id/export     把选中的数据集导出到该数据源
  *
  * scope 一律由写操作的调用方从「已知工作区列表」里回传，不接收任意路径输入。
  */
@@ -31,6 +32,7 @@ import {
   createDataSource,
   deleteDataset,
   deleteDataSource,
+  exportDatasetsToSource,
   getDataset,
   getDataSource,
   importSourceTable,
@@ -58,7 +60,7 @@ import {
 type Resource =
   | { kind: 'scopes' }
   | { kind: 'datasets'; id?: string; rows?: boolean }
-  | { kind: 'sources'; id?: string; action?: 'test' | 'tables' | 'import' }
+  | { kind: 'sources'; id?: string; action?: 'test' | 'tables' | 'import' | 'export' }
 
 /** `/api/lh-data/admin` 之后的路径解析。 */
 function parseAdminPath(pathname: string): Resource | undefined {
@@ -75,6 +77,7 @@ function parseAdminPath(pathname: string): Resource | undefined {
     if (parts.length === 2) return { kind: 'sources', id }
     if (parts.length === 3 && parts[2] === 'tables') return { kind: 'sources', id, action: 'tables' }
     if (parts.length === 3 && parts[2] === 'import') return { kind: 'sources', id, action: 'import' }
+    if (parts.length === 3 && parts[2] === 'export') return { kind: 'sources', id, action: 'export' }
     return undefined
   }
   if (parts[0] === 'datasets' && parts[1] !== undefined && parts[1].length > 0) {
@@ -174,6 +177,15 @@ export function registerAdminRoutes(services: DataServices): (() => void) | unde
           }
           const body = await readJsonBody(request, services.cfg.adminMaxBodyBytes)
           sendJson(response, 201, await importSourceTable(services, resource.id, body))
+          return
+        }
+        if (resource.action === 'export') {
+          if (method !== 'POST') {
+            methodNotAllowed(response)
+            return
+          }
+          const body = await readJsonBody(request, services.cfg.adminMaxBodyBytes)
+          sendJson(response, 200, await exportDatasetsToSource(services, resource.id, body))
           return
         }
         if (method === 'GET') {

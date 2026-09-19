@@ -164,7 +164,24 @@ export class MySQLConnector extends DatabaseConnector {
     return await this.query(this.buildSelectQuery(tableName, schemaName, range)) as Record<string, unknown>[]
   }
 
-  protected quoteIdent(name: string): string {
+  async run(sql: string, params: unknown[] = []): Promise<void> {
+    await this.query(sql, params)
+  }
+
+  nativeType(type: ColumnType): string {
+    switch (type) {
+      case 'numeric': return 'DOUBLE'
+      case 'boolean': return 'TINYINT(1)'
+      case 'date': return 'TEXT'
+      default: return 'TEXT'
+    }
+  }
+
+  placeholder(index: number): string {
+    return '?'
+  }
+
+  quoteIdent(name: string): string {
     return `\`${name.replace(/`/g, '``')}\``
   }
 

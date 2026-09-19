@@ -1,6 +1,6 @@
 {
   "name": "dsh-lh-data",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "dsh 插件：把工作区 Excel/CSV 导入本地 Turso（libSQL），并以句柄化的 dataset_* 工具做增删改查。",
   "type": "module",
   "main": "lib/index.js",

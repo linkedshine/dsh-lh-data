@@ -7,7 +7,7 @@
  * 写操作的只读/关闭判定由错误码驱动。
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import {
   ADMIN_PAGE_SIZE,
@@ -20,6 +20,7 @@ import { DatasetTable } from './DatasetTable'
 import { DatasetEditor } from './DatasetEditor'
 import { RowsPanel } from './RowsPanel'
 import { CreateForm } from './CreateForm'
+import { ExportDialog } from './ExportDialog'
 import { s } from './styles'
 
 type Mode = 'browse' | 'create'
@@ -37,7 +38,41 @@ export function DatasetsPanel(): ReactElement {
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [writable, setWritable] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [selectedItems, setSelectedItems] = useState<Map<string, DatasetAdminView>>(new Map())
+  const [exportOpen, setExportOpen] = useState(false)
   const requestId = useRef(0)
+
+  const selectedIdSet = useMemo(() => new Set(selectedItems.keys()), [selectedItems])
+
+  const toggleSelect = useCallback((id: string): void => {
+    const item = items.find(entry => entry.id === id)
+    if (item === undefined) return
+    setSelectedItems(previous => {
+      const next = new Map(previous)
+      if (next.has(id)) next.delete(id); else next.set(id, item)
+      return next
+    })
+  }, [items])
+
+  const toggleAll = useCallback((): void => {
+    setSelectedItems(previous => {
+      const next = new Map(previous)
+      const allOnPage = items.length > 0 && items.every(item => next.has(item.id))
+      if (allOnPage) {
+        for (const item of items) next.delete(item.id)
+      } else {
+        for (const item of items) next.set(item.id, item)
+      }
+      return next
+    })
+  }, [items])
+
+  const clearSelection = useCallback((): void => setSelectedItems(new Map()), [])
+
+  const closeExport = useCallback((): void => {
+    setExportOpen(false)
+    setSelectedItems(new Map())
+  }, [])
 
   const loadScopes = useCallback(async (): Promise<void> => {
     try {
@@ -146,6 +181,23 @@ export function DatasetsPanel(): ReactElement {
           title={writable ? '新建空数据集' : '只读模式或接口已关闭'}
         >+ 新建数据集</button>
         <button type="button" style={s.button} disabled={loadingList} onClick={() => void loadList(query, page)}>刷新</button>
+        {selectedIdSet.size > 0
+          ? (
+            <>
+              <button
+                type="button"
+                style={{ ...s.primaryButton, ...(!writable ? s.disabledButton : null) }}
+                disabled={!writable}
+                onClick={() => setExportOpen(true)}
+                title={writable ? '把选中的数据集上传到数据源' : '只读模式或接口已关闭'}
+              >上传到数据源</button>
+              <span style={s.muted}>
+                已选 {selectedIdSet.size} 项 ·{' '}
+                <span style={s.link} onClick={clearSelection}>清空</span>
+              </span>
+            </>
+            )
+          : null}
       </div>
 
       {error !== null
@@ -164,9 +216,22 @@ export function DatasetsPanel(): ReactElement {
         total={total}
         selectedId={selectedId}
         loading={loadingList}
+        selectedIds={selectedIdSet}
         onSelect={item => void openDetail(item)}
+        onToggleSelect={toggleSelect}
+        onToggleAll={toggleAll}
         onPageChange={p => { setPage(p); void loadList(query, p) }}
       />
+
+      {exportOpen
+        ? (
+          <ExportDialog
+            selected={[...selectedItems.values()].map(item => ({ id: item.id, name: item.name, scopeKey: item.scopeKey }))}
+            onClose={closeExport}
+            onError={handleWriteError}
+          />
+          )
+        : null}
 
       {mode === 'create'
         ? (

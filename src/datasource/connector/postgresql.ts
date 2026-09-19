@@ -190,7 +190,24 @@ export class PostgreSQLConnector extends DatabaseConnector {
     return await this.query(this.buildSelectQuery(tableName, schema, range)) as Record<string, unknown>[]
   }
 
-  protected quoteIdent(name: string): string {
+  async run(sql: string, params: unknown[] = []): Promise<void> {
+    await this.query(sql, params)
+  }
+
+  nativeType(type: ColumnType): string {
+    switch (type) {
+      case 'numeric': return 'DOUBLE PRECISION'
+      case 'boolean': return 'BOOLEAN'
+      case 'date': return 'TEXT'
+      default: return 'TEXT'
+    }
+  }
+
+  placeholder(index: number): string {
+    return `$${index + 1}`
+  }
+
+  quoteIdent(name: string): string {
     return `"${name.replace(/"/g, '""')}"`
   }
 

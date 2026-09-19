@@ -26,6 +26,7 @@ import {
 } from './datasource/connection'
 import { dataSourceErrorStatus, isDataSourceError, type DataSourceErrorCode } from './datasource/errors'
 import { importRemoteTable } from './datasource/importer'
+import { exportDatasetsToSource as runExportToSource } from './datasource/uploader'
 import type { DataSourceRecord } from './datasource/types'
 import {
   ADMIN_ROW_ID_COLUMN,
@@ -37,6 +38,7 @@ import {
   type DatasetAdminView,
   type DatasetDetailView,
   type DatasetRowsResult,
+  type ExportDatasetsResult,
   type ImportSourceTableResult,
   type ListDatasetsResult,
   type ListSourceTablesResult,
@@ -45,6 +47,7 @@ import {
 } from './admin-contract'
 import {
   parseCreateDataSource,
+  parseExportRequest,
   parseImportRequest,
   parseListQuery,
   parsePatchDataSource,
@@ -550,9 +553,35 @@ export async function importSourceTable(
       ...result.jobId === undefined ? {} : { jobId: result.jobId },
     }
   } catch (error: unknown) {
-    if (isDataSourceError(error)) {
-      throw new AdminServiceError(mapSourceCode(error.code), dataSourceErrorStatus(error.code), error.message)
-    }
-    throw new AdminServiceError('IMPORT_FAILED', 500, messageOf(error))
+  if (isDataSourceError(error)) {
+    throw new AdminServiceError(mapSourceCode(error.code), dataSourceErrorStatus(error.code), error.message)
   }
-}
+  throw new AdminServiceError('IMPORT_FAILED', 500, messageOf(error))
+  }
+  }
+
+  export async function exportDatasetsToSource(
+  services: DataServices,
+  sourceRef: string,
+  raw: unknown,
+  ): Promise<ExportDatasetsResult> {
+  assertWritable(services)
+  assertSourcesEnabled(services)
+  const request = parseExportRequest(raw)
+  // 先定位数据源：未知数据源比未知工作区更贴近调用方意图。
+  const record = await withSourceErrors(() => services.sources.require(sourceRef))
+  const outcome = await withSourceErrors(() => runExportToSource(services, record, {
+  datasets: request.datasets,
+  schemaName: request.schemaName,
+  overwrite: request.overwrite,
+  }))
+  // 冲突且未确认覆盖：整批拒绝，错误信息只列数据集/表显示名（脱敏）。
+  if (outcome.conflicts.length > 0 && !request.overwrite) {
+  throw new AdminServiceError(
+    'DUPLICATE_NAME',
+    409,
+    `以下表在数据源「${record.name}」中已存在，将被覆盖：${outcome.conflicts.join('、')}`,
+  )
+  }
+  return outcome
+  }
